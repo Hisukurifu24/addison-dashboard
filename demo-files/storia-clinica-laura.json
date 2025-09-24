@@ -1,0 +1,80 @@
+{
+	"patient": {
+		"firstName": "Laura",
+		"lastName": "Verdi",
+		"dateOfBirth": "1985-07-22",
+		"demographics": {
+			"age": 40,
+			"weight": 62,
+			"height": 165,
+			"sex": "F",
+			"diagnosis": "Malattia di Addison",
+			"diagnosisDate": "2018-03-15",
+			"comorbidities": [
+				"Celiachia",
+				"Vitiligine"
+			]
+		}
+	},
+	"therapyHistory": [
+		{
+			"date": "2025-09-01",
+			"medications": {
+				"cortisone": 30,
+				"florinef": 0.15
+			},
+			"dosage": {
+				"morning": 18.75,
+				"midday": 6.25,
+				"evening": 5
+			},
+			"effectiveness": "good",
+			"notes": "Dosaggio aumentato per stress lavorativo",
+			"duration": 30,
+			"prescriber": "Dr. Rossi"
+		},
+		{
+			"date": "2025-06-01",
+			"medications": {
+				"cortisone": 25,
+				"florinef": 0.1
+			},
+			"dosage": {
+				"morning": 15,
+				"midday": 6.25,
+				"evening": 3.75
+			},
+			"effectiveness": "excellent",
+			"notes": "Paziente riferisce ottime condizioni",
+			"duration": 90,
+			"prescriber": "Dr. Rossi"
+		}
+	],
+	"labResults": [
+		{
+			"date": "2025-09-20",
+			"acth": 165,
+			"cortisol": 4.1,
+			"na": 142,
+			"k": 4.2,
+			"renin": 4.8
+		},
+		{
+			"date": "2025-06-15",
+			"acth": 145,
+			"cortisol": 5.8,
+			"na": 140,
+			"k": 4.0,
+			"renin": 3.2
+		}
+	],
+	"riskFactors": [
+		"Gravidanza pianificata",
+		"Lavoro stressante"
+	],
+	"notes": [
+		"Paziente molto collaborativa",
+		"Segue dieta senza glutine per celiachia",
+		"Necessario monitoraggio ravvicinato"
+	]
+}

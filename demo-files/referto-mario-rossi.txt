@@ -1,0 +1,36 @@
+REFERTO MEDICO
+Ospedale San Paolo - Endocrinologia
+
+PAZIENTE: Mario Rossi
+DATA DI NASCITA: 15/03/1980
+ETÀ: 44 anni
+PESO: 75 kg
+ALTEZZA: 178 cm
+SESSO: M
+
+DIAGNOSI: Malattia di Addison (Insufficienza surrenalica primaria)
+DATA DIAGNOSI: 12/01/2020
+
+TERAPIA ATTUALE:
+- Cortisone Acetato: 25mg/die (15mg mattino, 6.25mg mezzogiorno, 3.75mg sera)
+- Florinef: 0.1mg/die
+
+ESAMI DI LABORATORIO (15/09/2025):
+- ACTH: 180 pg/mL (elevato)
+- Cortisolo: 3.2 μg/dL (ridotto)
+- Sodio: 138 mEq/L
+- Potassio: 4.8 mEq/L
+- Renina: 5.2 ng/mL/h (elevata)
+
+COMORBIDITÀ:
+- Tiroidite di Hashimoto
+- Diabete tipo 1
+
+NOTE:
+Paziente in terapia sostitutiva da 5 anni. 
+Compliance buona. 
+Controlli regolari ogni 3 mesi.
+Riferisce miglioramento della qualità di vita con terapia attuale.
+
+Dr.ssa Anna Bianchi
+Specialista Endocrinologo

@@ -22,13 +22,21 @@ interface PatientRecord {
 	k?: number | null;
 	acth?: number | null;
 	cortisol?: number | null;
+	cortisolUrinary24h?: number | null;  // Cortisolo libero urinario 24h
+	cortisolPost90min?: number | null;   // Cortisolo dosato 1.5h dopo assunzione farmaco
 	renin?: number | null;
 	bpSupSys?: number | null;  // PA supina sistolica
 	bpSupDia?: number | null;  // PA supina diastolica
 	bpOrthSys?: number | null; // PA ortostatica sistolica
 	bpOrthDia?: number | null; // PA ortostatica diastolica
+	glucose?: number | null;   // Glicemia (mg/dL)
+	hypoglycemia?: boolean;    // Episodi ipoglicemici (<70 mg/dL o sintomatici)
 	craveSalt?: boolean;
 	vertigo?: boolean;
+	// Terapia attuale al momento del record
+	glucocorticoidDose?: string | null;  // Dosaggio glucocorticoide (es. "Cortisone Acetato 25mg")
+	florinefDose?: string | null;        // Dosaggio Florinef (es. "0.1mg")
+	otherMedications?: string | null;    // Altri farmaci assunti
 	// Parametri Qualità della Vita (AddiQoL-inspired)
 	fatigue?: number | null;        // Affaticamento (1-5)
 	moodChanges?: number | null;    // Cambiamenti umore (1-5) 
@@ -158,6 +166,80 @@ interface LabImportData {
 	};
 	units: Record<string, string>;
 	labName: string;
+}
+
+// Drug interaction interfaces
+interface DrugInteraction {
+	drugName: string;
+	detectedVariants: string[]; // varianti rilevate nel testo
+	category: 'cyp3a4_inducer' | 'cyp3a4_inhibitor' | 'diuretic' | 'ace_inhibitor' | 'arb' |
+	'anticoagulant' | 'nsaid' | 'estrogen' | 'thyroid' | 'antacid' | 'other';
+	severity: 'critical' | 'major' | 'moderate' | 'minor';
+	effect: 'increase_gc_need' | 'decrease_gc_need' | 'electrolyte_risk' | 'absorption_issue' | 'monitoring_needed';
+	doseAdjustment: number; // % di modifica dose (es. 25 = +25%, -25 = -25%)
+	recommendations: string[];
+	monitoring: string[];
+}
+
+interface DrugAnalysisResult {
+	detected: DrugInteraction[];
+	totalDoseAdjustment: number; // % totale di aggiustamento
+	alerts: string[];
+	recommendations: string[];
+	requiresMonitoring: string[];
+}
+
+// Formulazioni glucocorticoidi
+interface GlucocorticoidFormulation {
+	name: string;
+	type: 'IR' | 'ER'; // Immediate Release / Extended Release
+	administrations: number; // somministrazioni giornaliere
+	bioavailability: number; // %
+	potencyFactor: number; // fattore di conversione vs cortisone acetato
+	description: string;
+	benefits: string[];
+	contraindications: string[];
+	costCategory: 'low' | 'medium' | 'high';
+}
+
+// Score candidatura ER-HC
+interface ERHCCandidacyScore {
+	totalScore: number; // 0-100
+	category: 'not_candidate' | 'possible' | 'good' | 'excellent';
+	factors: {
+		name: string;
+		score: number;
+		weight: number;
+		reason: string;
+	}[];
+	recommendation: string;
+	priority: 'low' | 'medium' | 'high' | 'urgent';
+}
+
+// Schema temporale dosaggio
+interface DosingSchedule {
+	schedule: 'two_dose' | 'three_dose' | 'er_once' | 'er_twice';
+	timings: string[];
+	doses: number[];
+	rationale: string;
+	optimizationFactors: string[];
+}
+
+// Protocollo switch formulazione
+interface SwitchProtocol {
+	fromFormulation: string;
+	toFormulation: string;
+	currentDose: number;
+	targetDose: number;
+	durationDays: number;
+	steps: {
+		day: number;
+		oldFormulationDose: number;
+		newFormulationDose: number;
+		instructions: string;
+	}[];
+	monitoring: string[];
+	warnings: string[];
 }
 
 // Unit system interface
@@ -681,6 +763,826 @@ export default function AddisonDashboard() {
 		return converted !== null ? converted.toFixed(parameter === 'cortisol' || parameter === 'acth' ? 1 : 0) : "-";
 	};
 
+	// ===== DATABASE FARMACI E INTERFERENZE ===== //
+	const DRUG_DATABASE: Record<string, Omit<DrugInteraction, 'detectedVariants'> & { variants: string[] }> = {
+		// INDUTTORI CYP3A4 - Aumentano metabolismo GC
+		rifampicina: {
+			variants: ['rifampicina', 'rifampin', 'rifadin'],
+			category: 'cyp3a4_inducer',
+			severity: 'critical',
+			effect: 'increase_gc_need',
+			doseAdjustment: 50,
+			recommendations: [
+				'Aumentare dose glucocorticoide del 50-100%',
+				'Monitorare ACTH e sintomi clinici strettamente',
+				'Considerare formulazioni ER-HC per maggiore stabilità'
+			],
+			monitoring: ['ACTH ogni 2-3 settimane', 'Elettroliti settimanali', 'Pressione arteriosa']
+		},
+		fenitoina: {
+			variants: ['fenitoina', 'phenytoin', 'dintoina', 'aurantin'],
+			category: 'cyp3a4_inducer',
+			severity: 'major',
+			effect: 'increase_gc_need',
+			doseAdjustment: 35,
+			recommendations: [
+				'Aumentare dose glucocorticoide del 25-50%',
+				'Valutare switch ad antiepilettici non induttori se possibile'
+			],
+			monitoring: ['ACTH mensile', 'Sintomi ipocortisolismo']
+		},
+		carbamazepina: {
+			variants: ['carbamazepina', 'carbamazepine', 'tegretol'],
+			category: 'cyp3a4_inducer',
+			severity: 'major',
+			effect: 'increase_gc_need',
+			doseAdjustment: 35,
+			recommendations: [
+				'Aumentare dose glucocorticoide del 25-50%',
+				'Considerare alternative (lamotrigina, levetiracetam)'
+			],
+			monitoring: ['ACTH mensile', 'Funzionalità epatica']
+		},
+		fenobarbital: {
+			variants: ['fenobarbital', 'phenobarbital', 'gardenal', 'luminal'],
+			category: 'cyp3a4_inducer',
+			severity: 'major',
+			effect: 'increase_gc_need',
+			doseAdjustment: 30,
+			recommendations: [
+				'Aumentare dose glucocorticoide del 30-40%',
+				'Monitoraggio frequente nei primi 2 mesi'
+			],
+			monitoring: ['ACTH ogni 3-4 settimane']
+		},
+
+		// INIBITORI CYP3A4 - Riducono metabolismo GC
+		ritonavir: {
+			variants: ['ritonavir', 'norvir'],
+			category: 'cyp3a4_inhibitor',
+			severity: 'critical',
+			effect: 'decrease_gc_need',
+			doseAdjustment: -30,
+			recommendations: [
+				'Ridurre dose glucocorticoide del 25-35%',
+				'Rischio significativo di Cushing iatrogeno',
+				'Considerare monitoraggio cortisolo libero urinario'
+			],
+			monitoring: ['Cortisolo libero urinario 24h mensile', 'Peso corporeo', 'Glicemia', 'PA settimanale']
+		},
+		itraconazolo: {
+			variants: ['itraconazolo', 'itraconazole', 'sporanox'],
+			category: 'cyp3a4_inhibitor',
+			severity: 'major',
+			effect: 'decrease_gc_need',
+			doseAdjustment: -25,
+			recommendations: [
+				'Ridurre dose glucocorticoide del 20-30%',
+				'Monitorare segni di sovradosaggio'
+			],
+			monitoring: ['Peso', 'PA', 'Glicemia']
+		},
+		ketoconazolo: {
+			variants: ['ketoconazolo', 'ketoconazole', 'nizoral'],
+			category: 'cyp3a4_inhibitor',
+			severity: 'major',
+			effect: 'decrease_gc_need',
+			doseAdjustment: -25,
+			recommendations: [
+				'Ridurre dose glucocorticoide del 20-30%',
+				'⚠️ Ketoconazolo stesso inibisce sintesi steroidea'
+			],
+			monitoring: ['Funzione surrenalica', 'Elettroliti']
+		},
+		claritromicina: {
+			variants: ['claritromicina', 'clarithromycin', 'klacid', 'macladin'],
+			category: 'cyp3a4_inhibitor',
+			severity: 'moderate',
+			effect: 'decrease_gc_need',
+			doseAdjustment: -20,
+			recommendations: [
+				'Ridurre dose glucocorticoide del 15-25% durante terapia',
+				'Ritornare a dose normale dopo sospensione antibiotico'
+			],
+			monitoring: ['Sintomi Cushing durante terapia']
+		},
+		eritromicina: {
+			variants: ['eritromicina', 'erythromycin', 'eritrocina'],
+			category: 'cyp3a4_inhibitor',
+			severity: 'moderate',
+			effect: 'decrease_gc_need',
+			doseAdjustment: -15,
+			recommendations: [
+				'Ridurre dose glucocorticoide del 10-20% durante terapia'
+			],
+			monitoring: ['PA', 'Sintomi']
+		},
+
+		// ESTROGENI - Aumentano CBG
+		estradiolo: {
+			variants: ['estradiolo', 'estradiol', 'progynova', 'climara'],
+			category: 'estrogen',
+			severity: 'major',
+			effect: 'increase_gc_need',
+			doseAdjustment: 30,
+			recommendations: [
+				'Aumentare dose glucocorticoide del 25-40%',
+				'Gli estrogeni aumentano CBG → riduce cortisolo libero',
+				'Considerare via transdermica per minore effetto'
+			],
+			monitoring: ['ACTH', 'Cortisolo libero', 'Sintomi ipocortisolismo']
+		},
+		etinilestradiolo: {
+			variants: ['etinilestradiolo', 'ethinylestradiol', 'pillola', 'contraccettivo orale'],
+			category: 'estrogen',
+			severity: 'major',
+			effect: 'increase_gc_need',
+			doseAdjustment: 30,
+			recommendations: [
+				'Aumentare dose glucocorticoide del 25-40%',
+				'Considerare contraccettivi progestinici puri'
+			],
+			monitoring: ['ACTH mensile primi 3 mesi']
+		},
+
+		// DIURETICI
+		furosemide: {
+			variants: ['furosemide', 'lasix'],
+			category: 'diuretic',
+			severity: 'moderate',
+			effect: 'electrolyte_risk',
+			doseAdjustment: 0,
+			recommendations: [
+				'Monitorare elettroliti frequentemente',
+				'Rischio ipokaliemia aumentato',
+				'Possibile necessità riduzione florinef'
+			],
+			monitoring: ['Na, K settimanali', 'Funzione renale']
+		},
+		idroclorotiazide: {
+			variants: ['idroclorotiazide', 'hydrochlorothiazide', 'esidrex'],
+			category: 'diuretic',
+			severity: 'moderate',
+			effect: 'electrolyte_risk',
+			doseAdjustment: 0,
+			recommendations: [
+				'Monitorare ipokaliemia',
+				'Può mascherare deficit mineralcorticoide'
+			],
+			monitoring: ['Elettroliti settimanali']
+		},
+		spironolattone: {
+			variants: ['spironolattone', 'spironolactone', 'aldactone'],
+			category: 'diuretic',
+			severity: 'major',
+			effect: 'electrolyte_risk',
+			doseAdjustment: 0,
+			recommendations: [
+				'⚠️ ANTAGONISTA MINERALCORTICOIDE',
+				'Può richiedere aumento significativo florinef',
+				'Valutare alternative se possibile'
+			],
+			monitoring: ['Na, K ogni 3-5 giorni', 'Renina', 'PA']
+		},
+
+		// ACE-INIBITORI E SARTANI
+		enalapril: {
+			variants: ['enalapril', 'enapren'],
+			category: 'ace_inhibitor',
+			severity: 'moderate',
+			effect: 'electrolyte_risk',
+			doseAdjustment: 0,
+			recommendations: [
+				'Monitorare iperkaliemia',
+				'Può ridurre aldosterone endogeno residuo'
+			],
+			monitoring: ['K, Na settimanali inizialmente']
+		},
+		ramipril: {
+			variants: ['ramipril', 'triatec'],
+			category: 'ace_inhibitor',
+			severity: 'moderate',
+			effect: 'electrolyte_risk',
+			doseAdjustment: 0,
+			recommendations: [
+				'Attenzione a iperkaliemia',
+				'Monitoraggio elettrolitico stretto'
+			],
+			monitoring: ['Elettroliti settimanali']
+		},
+		losartan: {
+			variants: ['losartan', 'lortaan'],
+			category: 'arb',
+			severity: 'moderate',
+			effect: 'electrolyte_risk',
+			doseAdjustment: 0,
+			recommendations: [
+				'Monitorare iperkaliemia',
+				'Effetti simili ad ACE-inibitori'
+			],
+			monitoring: ['K settimanale']
+		},
+
+		// ANTICOAGULANTI
+		warfarin: {
+			variants: ['warfarin', 'coumadin'],
+			category: 'anticoagulant',
+			severity: 'moderate',
+			effect: 'monitoring_needed',
+			doseAdjustment: 0,
+			recommendations: [
+				'Glucocorticoidi possono potenziare effetto anticoagulante',
+				'INR più frequente dopo modifiche dose GC'
+			],
+			monitoring: ['INR settimanale dopo modifiche GC']
+		},
+
+		// FANS
+		ibuprofene: {
+			variants: ['ibuprofene', 'ibuprofen', 'brufen', 'moment'],
+			category: 'nsaid',
+			severity: 'moderate',
+			effect: 'monitoring_needed',
+			doseAdjustment: 0,
+			recommendations: [
+				'Rischio aumentato gastrite/ulcera se usato con GC',
+				'Preferire paracetamolo quando possibile',
+				'Considerare protezione gastrica'
+			],
+			monitoring: ['Sintomi gastrointestinali']
+		},
+
+		// ORMONI TIROIDEI
+		levotiroxina: {
+			variants: ['levotiroxina', 'levothyroxine', 'eutirox', 'tirosint'],
+			category: 'thyroid',
+			severity: 'moderate',
+			effect: 'increase_gc_need',
+			doseAdjustment: 10,
+			recommendations: [
+				'Ormoni tiroidei aumentano metabolismo cortisolo',
+				'Aumenti levotiroxina possono slatentizzare insufficienza surrenalica',
+				'Aggiustare GC PRIMA di ottimizzare terapia tiroidea'
+			],
+			monitoring: ['ACTH dopo modifiche levotiroxina', 'Sintomi clinici']
+		},
+
+		// ANTACIDI
+		omeprazolo: {
+			variants: ['omeprazolo', 'omeprazole', 'mopral', 'antra'],
+			category: 'antacid',
+			severity: 'minor',
+			effect: 'absorption_issue',
+			doseAdjustment: 0,
+			recommendations: [
+				'Può ridurre assorbimento HC se assunti insieme',
+				'Distanziare assunzione di 2 ore'
+			],
+			monitoring: ['Efficacia terapia GC']
+		},
+		lansoprazolo: {
+			variants: ['lansoprazolo', 'lansoprazole', 'limpidex'],
+			category: 'antacid',
+			severity: 'minor',
+			effect: 'absorption_issue',
+			doseAdjustment: 0,
+			recommendations: [
+				'Distanziare da assunzione GC di 2 ore'
+			],
+			monitoring: []
+		}
+	};
+
+	// ===== FUNZIONE ANALISI INTERFERENZE FARMACOLOGICHE ===== //
+	const analyzeDrugInteractions = (medicationsText: string | null): DrugAnalysisResult => {
+		const result: DrugAnalysisResult = {
+			detected: [],
+			totalDoseAdjustment: 0,
+			alerts: [],
+			recommendations: [],
+			requiresMonitoring: []
+		};
+
+		if (!medicationsText || medicationsText.trim() === '') {
+			return result;
+		}
+
+		const textLower = medicationsText.toLowerCase();
+
+		// Cerca ogni farmaco nel database
+		Object.entries(DRUG_DATABASE).forEach(([drugKey, drugData]) => {
+			const detectedVariants: string[] = [];
+
+			// Controlla tutte le varianti del farmaco
+			drugData.variants.forEach(variant => {
+				if (textLower.includes(variant.toLowerCase())) {
+					detectedVariants.push(variant);
+				}
+			});
+
+			// Se trovato, aggiungi alle interazioni rilevate
+			if (detectedVariants.length > 0) {
+				const interaction: DrugInteraction = {
+					drugName: drugKey.charAt(0).toUpperCase() + drugKey.slice(1),
+					detectedVariants,
+					category: drugData.category,
+					severity: drugData.severity,
+					effect: drugData.effect,
+					doseAdjustment: drugData.doseAdjustment,
+					recommendations: drugData.recommendations,
+					monitoring: drugData.monitoring
+				};
+
+				result.detected.push(interaction);
+			}
+		});
+
+		// Calcola aggiustamento totale dose
+		const doseAdjustments = result.detected
+			.filter(d => d.effect === 'increase_gc_need' || d.effect === 'decrease_gc_need')
+			.map(d => d.doseAdjustment);
+
+		if (doseAdjustments.length > 0) {
+			// Calcola effetto cumulativo (non additivo ma moltiplicativo)
+			result.totalDoseAdjustment = doseAdjustments.reduce((acc, curr) => {
+				const factor = 1 + (curr / 100);
+				return acc * factor;
+			}, 1) - 1;
+			result.totalDoseAdjustment = Math.round(result.totalDoseAdjustment * 100);
+		}
+
+		// Genera alerts per severità critica/major
+		result.detected
+			.filter(d => d.severity === 'critical' || d.severity === 'major')
+			.forEach(d => {
+				const severityIcon = d.severity === 'critical' ? '🚨' : '⚠️';
+				result.alerts.push(
+					`${severityIcon} ${d.drugName.toUpperCase()}: Interazione ${d.severity === 'critical' ? 'CRITICA' : 'IMPORTANTE'} - ` +
+					`${d.effect === 'increase_gc_need' ? 'Richiede AUMENTO dose GC' :
+						d.effect === 'decrease_gc_need' ? 'Richiede RIDUZIONE dose GC' :
+							'Richiede monitoraggio'}`
+				);
+			});
+
+		// Consolida raccomandazioni
+		const uniqueRecs = new Set<string>();
+		result.detected.forEach(d => {
+			d.recommendations.forEach(rec => uniqueRecs.add(rec));
+		});
+		result.recommendations = Array.from(uniqueRecs);
+
+		// Consolida monitoraggi
+		const uniqueMon = new Set<string>();
+		result.detected.forEach(d => {
+			d.monitoring.forEach(mon => uniqueMon.add(mon));
+		});
+		result.requiresMonitoring = Array.from(uniqueMon);
+
+		return result;
+	};
+
+	// ===== DATABASE FORMULAZIONI GLUCOCORTICOIDI ===== //
+	const FORMULATIONS: Record<string, GlucocorticoidFormulation> = {
+		cortisone_acetate: {
+			name: 'Cortone Acetato',
+			type: 'IR',
+			administrations: 2,
+			bioavailability: 80,
+			potencyFactor: 1.0, // riferimento
+			description: 'Formulazione standard a rilascio immediato',
+			benefits: [
+				'Costo contenuto',
+				'Ampia esperienza clinica',
+				'Facilmente frazionabile'
+			],
+			contraindications: [],
+			costCategory: 'low'
+		},
+		hydrocortisone: {
+			name: 'Idrocortisone',
+			type: 'IR',
+			administrations: 3,
+			bioavailability: 90,
+			potencyFactor: 0.8, // 25mg CA = 20mg HC
+			description: 'Formulazione a rilascio immediato più potente',
+			benefits: [
+				'Maggiore potenza (emivita più breve)',
+				'Migliore controllo con 3 dosi',
+				'Opzione per via parenterale'
+			],
+			contraindications: [],
+			costCategory: 'low'
+		},
+		plenadren: {
+			name: 'Plenadren',
+			type: 'ER',
+			administrations: 1,
+			bioavailability: 85,
+			potencyFactor: 0.64, // 25mg CA = 16mg Plenadren (riduzione 20% per minore esposizione)
+			description: 'Idrocortisone a rilascio modificato dual-release',
+			benefits: [
+				'Monosomministrazione mattutina (migliore aderenza)',
+				'Riduzione peso corporeo (-1-2kg)',
+				'Riduzione pressione arteriosa (-5mmHg sistolica)',
+				'Miglioramento HbA1c (-0.3-0.6%)',
+				'Miglioramento qualità vita (AddiQoL +4 punti)',
+				'Esposizione cortisolo -20% vs IR'
+			],
+			contraindications: [
+				'Malassorbimento intestinale',
+				'Transito intestinale rapido',
+				'Bypass gastrico',
+				'Malattie infiammatorie croniche intestinali non controllate'
+			],
+			costCategory: 'high'
+		},
+		efmody: {
+			name: 'Efmody',
+			type: 'ER',
+			administrations: 2,
+			bioavailability: 88,
+			potencyFactor: 0.72, // 25mg CA = 18mg Efmody
+			description: 'Idrocortisone MR con rilascio circadiano',
+			benefits: [
+				'Ripristina ritmo circadiano fisiologico',
+				'Dose serale (23:00) + dose mattutina (07:00)',
+				'Ottimale per astenia mattutina',
+				'Picco cortisolo al risveglio',
+				'Miglioramento pattern sonno-veglia'
+			],
+			contraindications: [
+				'Malassorbimento',
+				'Transito rapido',
+				'Difficoltà aderenza schema serale'
+			],
+			costCategory: 'high'
+		}
+	};
+
+	// ===== CONVERSIONE TRA FORMULAZIONI ===== //
+	const convertDoseBetweenFormulations = (
+		dose: number,
+		fromFormulation: keyof typeof FORMULATIONS,
+		toFormulation: keyof typeof FORMULATIONS
+	): number => {
+		const from = FORMULATIONS[fromFormulation];
+		const to = FORMULATIONS[toFormulation];
+
+		// Converti prima a equivalente cortisone acetato, poi alla formulazione target
+		const caEquivalent = dose / from.potencyFactor;
+		const targetDose = caEquivalent * to.potencyFactor;
+
+		// Arrotonda a 0.5mg per ER, a quarti per IR
+		if (to.type === 'ER') {
+			return Math.round(targetDose * 2) / 2;
+		} else {
+			return Math.round(targetDose * 4) / 4;
+		}
+	};
+
+	// ===== ALGORITMO SELEZIONE SCHEMA TEMPORALE ===== //
+	const selectOptimalDosingSchedule = (
+		dose: number,
+		symptoms: {
+			morningFatigue?: boolean;
+			afternoonFatigue?: boolean;
+			eveningFatigue?: boolean;
+			sleepDisturbance?: boolean;
+			nightSymptoms?: boolean;
+		},
+		qolScore?: number
+	): DosingSchedule => {
+		const factors: string[] = [];
+
+		// Valutazione schema basata su dose
+		if (dose <= 25) {
+			// Due dosi preferibile per dosi basse
+			factors.push('Dose ≤25mg: schema a 2 somministrazioni riduce esposizione complessiva');
+
+			if (symptoms.morningFatigue) {
+				factors.push('Astenia mattutina: aumentare quota mattutina al 70%');
+				return {
+					schedule: 'two_dose',
+					timings: ['07:30', '12:30'],
+					doses: [Math.round(dose * 0.70 * 4) / 4, Math.round(dose * 0.30 * 4) / 4],
+					rationale: 'Schema 70/30 per astenia mattutina',
+					optimizationFactors: factors
+				};
+			}
+
+			return {
+				schedule: 'two_dose',
+				timings: ['07:30', '12:30'],
+				doses: [Math.round(dose * 0.67 * 4) / 4, Math.round(dose * 0.33 * 4) / 4],
+				rationale: 'Schema standard 67/33 per dosi moderate',
+				optimizationFactors: factors
+			};
+		} else {
+			// Tre dosi necessarie per dosi elevate
+			factors.push('Dose >25mg: tripla somministrazione per migliore copertura');
+
+			if (symptoms.afternoonFatigue || symptoms.eveningFatigue) {
+				factors.push('Astenia pomeridiana/serale: aumentare dosi pomeridiane');
+				return {
+					schedule: 'three_dose',
+					timings: ['07:30', '12:30', '17:30'],
+					doses: [
+						Math.round(dose * 0.45 * 4) / 4,
+						Math.round(dose * 0.35 * 4) / 4,
+						Math.round(dose * 0.20 * 4) / 4
+					],
+					rationale: 'Schema 45/35/20 per supporto pomeridiano',
+					optimizationFactors: factors
+				};
+			}
+
+			return {
+				schedule: 'three_dose',
+				timings: ['07:30', '12:30', '17:30'],
+				doses: [
+					Math.round(dose * 0.50 * 4) / 4,
+					Math.round(dose * 0.30 * 4) / 4,
+					Math.round(dose * 0.20 * 4) / 4
+				],
+				rationale: 'Schema standard 50/30/20',
+				optimizationFactors: factors
+			};
+		}
+	};
+
+	// ===== SCORE CANDIDATURA ER-HC ===== //
+	const calculateERHCCandidacyScore = (params: {
+		currentDose: number;
+		hypertension: boolean;
+		hypokaliemia: boolean;
+		qolScore: number | null;
+		adherenceIssues: boolean;
+		morningFatigue: boolean;
+		multipleAdministrations: number;
+		age: number;
+		bmi?: number;
+		hba1c?: number;
+	}): ERHCCandidacyScore => {
+		const factors: ERHCCandidacyScore['factors'] = [];
+		let totalScore = 0;
+
+		// Fattore 1: Dose elevata (peso 15%)
+		if (params.currentDose > 37.5) {
+			const score = 15;
+			factors.push({
+				name: 'Dose molto elevata (>37.5mg)',
+				score,
+				weight: 15,
+				reason: 'ER-HC riduce esposizione complessiva del 20%'
+			});
+			totalScore += score;
+		} else if (params.currentDose > 25) {
+			const score = 10;
+			factors.push({
+				name: 'Dose elevata (>25mg)',
+				score,
+				weight: 15,
+				reason: 'Potenziale beneficio da riduzione esposizione'
+			});
+			totalScore += score;
+		} else {
+			factors.push({
+				name: 'Dose standard (≤25mg)',
+				score: 3,
+				weight: 15,
+				reason: 'Beneficio limitato ma possibile'
+			});
+			totalScore += 3;
+		}
+
+		// Fattore 2: Segni Cushingoidi (peso 20%)
+		let cushingoidScore = 0;
+		if (params.hypertension) cushingoidScore += 10;
+		if (params.hypokaliemia) cushingoidScore += 10;
+		if (params.bmi && params.bmi > 28) cushingoidScore += 5;
+		if (params.hba1c && params.hba1c > 6.0) cushingoidScore += 5;
+
+		const finalCushingScore = Math.min(20, cushingoidScore);
+		if (finalCushingScore > 0) {
+			factors.push({
+				name: 'Segni Cushingoidi subclinici',
+				score: finalCushingScore,
+				weight: 20,
+				reason: 'ER-HC riduce effetti metabolici avversi'
+			});
+			totalScore += finalCushingScore;
+		}
+
+		// Fattore 3: Qualità della Vita (peso 25%)
+		if (params.qolScore !== null) {
+			if (params.qolScore < 2.5) {
+				factors.push({
+					name: 'QoL critica (<2.5)',
+					score: 25,
+					weight: 25,
+					reason: 'ER-HC migliora AddiQoL in media di +4 punti'
+				});
+				totalScore += 25;
+			} else if (params.qolScore < 3.5) {
+				factors.push({
+					name: 'QoL subottimale (2.5-3.5)',
+					score: 18,
+					weight: 25,
+					reason: 'Significativo margine di miglioramento'
+				});
+				totalScore += 18;
+			} else {
+				factors.push({
+					name: 'QoL accettabile (≥3.5)',
+					score: 8,
+					weight: 25,
+					reason: 'Miglioramento comunque possibile'
+				});
+				totalScore += 8;
+			}
+		}
+
+		// Fattore 4: Aderenza terapeutica (peso 20%)
+		if (params.adherenceIssues) {
+			factors.push({
+				name: 'Problemi di aderenza',
+				score: 20,
+				weight: 20,
+				reason: 'Monosomministrazione Plenadren facilita aderenza'
+			});
+			totalScore += 20;
+		} else if (params.multipleAdministrations >= 3) {
+			factors.push({
+				name: 'Schema complesso (≥3 somministrazioni)',
+				score: 15,
+				weight: 20,
+				reason: 'Semplificazione schema migliora aderenza'
+			});
+			totalScore += 15;
+		} else {
+			factors.push({
+				name: 'Aderenza buona',
+				score: 5,
+				weight: 20,
+				reason: 'Beneficio da semplificazione comunque presente'
+			});
+			totalScore += 5;
+		}
+
+		// Fattore 5: Sintomi specifici (peso 20%)
+		let symptomScore = 0;
+		if (params.morningFatigue) {
+			symptomScore += 15;
+			factors.push({
+				name: 'Astenia mattutina',
+				score: 15,
+				weight: 20,
+				reason: 'Efmody ripristina picco mattutino fisiologico'
+			});
+		}
+
+		if (symptomScore === 0) {
+			factors.push({
+				name: 'Sintomi aspecifici',
+				score: 5,
+				weight: 20,
+				reason: 'Ritmo circadiano migliora benessere generale'
+			});
+			symptomScore = 5;
+		}
+		totalScore += symptomScore;
+
+		// Determinazione categoria
+		let category: ERHCCandidacyScore['category'];
+		let priority: ERHCCandidacyScore['priority'];
+		let recommendation: string;
+
+		if (totalScore >= 75) {
+			category = 'excellent';
+			priority = 'urgent';
+			recommendation = '🟢 CANDIDATO ECCELLENTE per ER-HC. Switch fortemente raccomandato. ' +
+				'Benefici attesi significativi su QoL, parametri metabolici e aderenza.';
+		} else if (totalScore >= 60) {
+			category = 'good';
+			priority = 'high';
+			recommendation = '🟡 BUON CANDIDATO per ER-HC. Switch consigliato dopo discussione rischi-benefici e costi. ' +
+				'Benefici attesi rilevanti.';
+		} else if (totalScore >= 40) {
+			category = 'possible';
+			priority = 'medium';
+			recommendation = '🟠 CANDIDATO POSSIBILE per ER-HC. Valutare caso per caso considerando preferenze paziente, ' +
+				'costi e aspettative realistiche sui benefici.';
+		} else {
+			category = 'not_candidate';
+			priority = 'low';
+			recommendation = '⚪ Non candidato prioritario per ER-HC. Terapia convenzionale adeguata. ' +
+				'Rivalutare in caso di peggioramento QoL o comparsa segni Cushingoidi.';
+		}
+
+		return {
+			totalScore,
+			category,
+			factors,
+			recommendation,
+			priority
+		};
+	};
+
+	// ===== PROTOCOLLO SWITCH FORMULAZIONE ===== //
+	const generateSwitchProtocol = (
+		fromFormulation: keyof typeof FORMULATIONS,
+		toFormulation: keyof typeof FORMULATIONS,
+		currentDose: number
+	): SwitchProtocol => {
+		const targetDose = convertDoseBetweenFormulations(currentDose, fromFormulation, toFormulation);
+		const from = FORMULATIONS[fromFormulation];
+		const to = FORMULATIONS[toFormulation];
+
+		const protocol: SwitchProtocol = {
+			fromFormulation: from.name,
+			toFormulation: to.name,
+			currentDose,
+			targetDose,
+			durationDays: 7,
+			steps: [],
+			monitoring: [],
+			warnings: []
+		};
+
+		// Switch graduale in 7 giorni per ER-HC
+		if (to.type === 'ER') {
+			protocol.steps = [
+				{
+					day: 1,
+					oldFormulationDose: currentDose,
+					newFormulationDose: 0,
+					instructions: `Ultimo giorno con ${from.name} ${currentDose}mg. ` +
+						`Preparare ${to.name} per inizio domani mattina.`
+				},
+				{
+					day: 2,
+					oldFormulationDose: 0,
+					newFormulationDose: targetDose,
+					instructions: `INIZIO ${to.name} ${targetDose}mg al mattino (07:00-08:00). ` +
+						`Sospendere completamente ${from.name}. Monitorare sintomi nelle prime 48h.`
+				},
+				{
+					day: 3,
+					oldFormulationDose: 0,
+					newFormulationDose: targetDose,
+					instructions: `Continuare ${to.name} ${targetDose}mg. Valutare tollerabilità e sintomi.`
+				},
+				{
+					day: 7,
+					oldFormulationDose: 0,
+					newFormulationDose: targetDose,
+					instructions: `Fine prima settimana. Valutazione clinica: sintomi, PA, peso, benessere generale.`
+				}
+			];
+
+			protocol.monitoring = [
+				'📅 Controllo sintomi giorni 2-3-7',
+				'📅 Elettroliti e ACTH a 2 settimane',
+				'📅 Valutazione QoL a 4 settimane',
+				'📅 Follow-up completo a 8-12 settimane',
+				'⚖️ Peso corporeo settimanale primi 2 mesi',
+				'🩺 PA a domicilio giornaliera prima settimana, poi settimanale'
+			];
+
+			protocol.warnings = [
+				'⚠️ NON dividere o frantumare compresse ER-HC',
+				'⚠️ Assumere a stomaco vuoto o con pasto leggero',
+				'⚠️ NON associare a inibitori pompa protonica nelle 2h precedenti',
+				'⚠️ In caso di vomito <2h: dose extra IR-HC 10mg, NON ripetere ER-HC',
+				'⚠️ Protocolli stress: usare sempre IR-HC, NON ER-HC',
+				`⚠️ Tenere disponibile ${from.name} per emergenze primi 30 giorni`
+			];
+
+		} else {
+			// Switch tra formulazioni IR
+			protocol.steps = [
+				{
+					day: 1,
+					oldFormulationDose: 0,
+					newFormulationDose: targetDose,
+					instructions: `Switch diretto a ${to.name} ${targetDose}mg. ` +
+						`Distribuire secondo schema temporale ottimale.`
+				}
+			];
+
+			protocol.monitoring = [
+				'📅 Controllo sintomi a 3-5 giorni',
+				'📅 Elettroliti a 2 settimane se dose modificata'
+			];
+
+			protocol.warnings = [
+				'⚠️ Adeguare distribuzione oraria in base a emivita del nuovo farmaco'
+			];
+		}
+
+		return protocol;
+	};
+
 	// ===== ENGINE DI ANALISI PREDITTIVA ===== //
 	const analyzePatientResponse = (patient: PatientProfile): ResponsePattern => {
 		const history = patient.therapyHistory;
@@ -806,6 +1708,8 @@ export default function AddisonDashboard() {
 		k: units.k === 'mEq/L' ? '3.5-5.0' : '3.5-5.0',
 		acth: units.acth === 'pg/mL' ? '10-50' : '2.2-11.0',
 		cortisol: units.cortisol === 'μg/dL' ? '5-25' : '138-690',
+		cortisolUrinary24h: units.cortisol === 'μg/dL' ? '10-100 μg/24h' : '28-276 nmol/24h',
+		cortisolPost90min: units.cortisol === 'μg/dL' ? '<20 (sovradosaggio se >25)' : '<552 (sovradosaggio se >690)',
 		renin: units.renin === 'ng/mL/h' ? '0.3-4.0' :
 			units.renin === 'μg/L/h' ? '0.3-4.0' : '0.8-10.4',
 		bp: units.bp === 'mmHg' ? '90-140' : '12-19'
@@ -844,6 +1748,8 @@ export default function AddisonDashboard() {
 			bpSupDia: null,
 			bpOrthSys: null,
 			bpOrthDia: null,
+			glucose: null,
+			hypoglycemia: false,
 			craveSalt: false,
 			vertigo: false,
 			// Valori QoL iniziali null
@@ -870,11 +1776,19 @@ export default function AddisonDashboard() {
 		const kValue = d.get("k") as string;
 		const acthValue = d.get("acth") as string;
 		const cortValue = d.get("cort") as string;
+		const cortUrinary24hValue = d.get("cortUrinary24h") as string;
+		const cortPost90minValue = d.get("cortPost90min") as string;
 		const reninValue = d.get("renin") as string;
 		const bpSupSysValue = d.get("bpSupSys") as string;
 		const bpSupDiaValue = d.get("bpSupDia") as string;
 		const bpOrthSysValue = d.get("bpOrthSys") as string;
 		const bpOrthDiaValue = d.get("bpOrthDia") as string;
+		const glucoseValue = d.get("glucose") as string;
+
+		// Terapia attuale
+		const glucocorticoidDoseValue = d.get("glucocorticoidDose") as string;
+		const florinefDoseValue = d.get("florinefDose") as string;
+		const otherMedicationsValue = d.get("otherMedications") as string;
 
 		// Convert input values from input units to standard storage units (mEq/L, μg/dL, pg/mL, etc.)
 		const convertToStandard = (value: string, param: keyof UnitSystem, inputUnit: string): number | null => {
@@ -904,13 +1818,21 @@ export default function AddisonDashboard() {
 			k: convertToStandard(kValue, 'k', inputUnits.k),
 			acth: convertToStandard(acthValue, 'acth', inputUnits.acth),
 			cortisol: convertToStandard(cortValue, 'cortisol', inputUnits.cortisol),
+			cortisolUrinary24h: convertToStandard(cortUrinary24hValue, 'cortisol', inputUnits.cortisol),
+			cortisolPost90min: convertToStandard(cortPost90minValue, 'cortisol', inputUnits.cortisol),
 			renin: convertToStandard(reninValue, 'renin', inputUnits.renin),
 			bpSupSys: convertToStandard(bpSupSysValue, 'bp', inputUnits.bp),
 			bpSupDia: convertToStandard(bpSupDiaValue, 'bp', inputUnits.bp),
 			bpOrthSys: convertToStandard(bpOrthSysValue, 'bp', inputUnits.bp),
 			bpOrthDia: convertToStandard(bpOrthDiaValue, 'bp', inputUnits.bp),
+			glucose: glucoseValue ? parseFloat(glucoseValue) : null,
+			hypoglycemia: d.get("hypoglycemia") === 'on',
 			craveSalt: d.get("crave") === 'on',
 			vertigo: d.get("vert") === 'on',
+			// Terapia attuale
+			glucocorticoidDose: glucocorticoidDoseValue || null,
+			florinefDose: florinefDoseValue || null,
+			otherMedications: otherMedicationsValue || null,
 			// Parametri Qualità della Vita
 			fatigue: parseQoLValue(d.get("fatigue") as string),
 			moodChanges: parseQoLValue(d.get("moodChanges") as string),
@@ -1009,6 +1931,14 @@ export default function AddisonDashboard() {
 		const saltCraving = r.craveSalt;
 		const vertigo = r.vertigo;
 
+		// ===== ANALISI INTERFERENZE FARMACOLOGICHE ===== //
+		const drugAnalysis = analyzeDrugInteractions(r.otherMedications);
+
+		// Aggiungi alerts da interferenze farmacologiche
+		if (drugAnalysis.alerts.length > 0) {
+			alerts.push(...drugAnalysis.alerts);
+		}
+
 		// ===== IDENTIFICAZIONE CRISI SURRENALICA ===== //
 		let crisisRisk = false;
 		if (hyponatremia && hyperkaliemia && hypotension) {
@@ -1026,27 +1956,81 @@ export default function AddisonDashboard() {
 		let dosageReason = "";
 		let erHcRecommendation = "";
 
-		// Valutazione candidatura per ER-HC (basata su evidenze 2024-2025)
-		const erHcCandidate = hypertension || hypokaliemia || (currentDose > 25) ||
-			(elevatedACTH && lowCortisol) || vertigo;
+		// ===== CALCOLO SCORE CANDIDATURA ER-HC ===== //
+		const qolParamsForERHC = [r.fatigue, r.moodChanges, r.workCapacity, r.socialLife,
+		r.sleepQuality, r.physicalAppearance, r.overallWellbeing, r.treatmentSatisfaction];
+		const validQoLForERHC = qolParamsForERHC.filter(p => p !== null && p !== undefined);
+		const avgQoLScoreForERHC = validQoLForERHC.length > 0 ? validQoLForERHC.reduce((a, b) => a + b, 0) / validQoLForERHC.length : null;
 
-		if (erHcCandidate) {
+		const erHcScore = calculateERHCCandidacyScore({
+			currentDose,
+			hypertension,
+			hypokaliemia,
+			qolScore: avgQoLScoreForERHC,
+			adherenceIssues: false, // Potrebbe essere un campo da aggiungere
+			morningFatigue: r.fatigue !== null && r.fatigue >= 4,
+			multipleAdministrations: currentTherapy.cortisoneAcetate.evening > 0 ? 3 : 2,
+			age: currentPatient?.demographics.age || 50,
+			bmi: undefined, // Potrebbe essere calcolato da peso/altezza se disponibili
+			hba1c: undefined // Potrebbe essere aggiunto come parametro
+		});
+
+		// Genera raccomandazione ER-HC dettagliata
+		if (erHcScore.totalScore >= 40) {
+			const plenadrenDose = convertDoseBetweenFormulations(currentDose, 'cortisone_acetate', 'plenadren');
+			const efmodyDose = convertDoseBetweenFormulations(currentDose, 'cortisone_acetate', 'efmody');
+
 			erHcRecommendation = `
-💊 FORMULAZIONI A RILASCIO PROLUNGATO (ER-HC):
-• PLENADREN: monosomministrazione mattutina
-  - Riduce peso corporeo (-1-2kg), pressione arteriosa (-5mmHg sistolica)
-  - Migliora HbA1c (-0.3-0.6%), qualità di vita
-  - Dose equivalente: ${Math.round(currentDose * 0.8 * 4) / 4}mg (riduzione 20% per minore esposizione)
-  
-• EFMODY: doppia somministrazione (sera + mattina)
-  - Mimetic ritmo circadiano naturale
-  - 2/3 dose ore 23:00, 1/3 dose ore 07:00
-  - Particolarmente indicato se astenia mattutina
-  
-⚠️ CONSIDERAZIONI:
-• Costo maggiore vs. terapia convenzionale
-• Necessari comunque HC/CA per situazioni di stress
-• Controindicati in malassorbimento o transito rapido`;
+💊 VALUTAZIONE FORMULAZIONI A RILASCIO PROLUNGATO (ER-HC)
+
+📊 SCORE CANDIDATURA: ${erHcScore.totalScore}/100 - ${erHcScore.category.toUpperCase()}
+Priorità: ${erHcScore.priority.toUpperCase()}
+
+${erHcScore.recommendation}
+
+🔍 ANALISI FATTORI (dettaglio):`;
+
+			erHcScore.factors.forEach(factor => {
+				erHcRecommendation += `\n• ${factor.name}: ${factor.score}/${factor.weight} punti`;
+				erHcRecommendation += `\n  Motivazione: ${factor.reason}`;
+			});
+
+			erHcRecommendation += `\n
+📋 OPZIONI TERAPEUTICHE:
+
+1️⃣ PLENADREN ${plenadrenDose}mg
+   • Monosomministrazione mattutina (07:00-08:00)
+   • Rilascio dual-phase (immediato + prolungato)
+   • Benefici dimostrati:
+     - Riduzione peso corporeo: -1-2kg
+     - Riduzione PA sistolica: -5mmHg
+     - Miglioramento HbA1c: -0.3-0.6%
+     - Miglioramento AddiQoL: +4 punti
+     - Esposizione cortisolo: -20% vs IR
+   • Indicato per: scarsa aderenza, multi-somministrazioni, segni Cushingoidi
+
+2️⃣ EFMODY ${efmodyDose}mg
+   • Doppia somministrazione circadiana:
+     - Sera (23:00): ${Math.round(efmodyDose * 0.67 * 2) / 2}mg
+     - Mattina (07:00): ${Math.round(efmodyDose * 0.33 * 2) / 2}mg
+   • Ripristina ritmo circadiano fisiologico
+   • Particolarmente indicato per:
+     - Astenia mattutina marcata
+     - Disturbi del sonno
+     - Desiderio picco cortisolo al risveglio
+
+⚠️ CONTROINDICAZIONI ER-HC:
+${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
+
+💰 CONSIDERAZIONI ECONOMICHE:
+   • Costo: ER-HC >> IR (rapporto ~10:1)
+   • Valutare copertura SSN/assicurativa
+   • Considerare rapporto costo-beneficio individuale
+
+⚕️ NECESSITÀ COMUNQUE IR-HC/CA:
+   • Protocolli stress acuto
+   • Situazioni emergenza
+   • Backup per problemi gastrointestinali`;
 		}
 
 		// Funzioni per gestione dosi in quarti di compressa
@@ -1072,10 +2056,29 @@ export default function AddisonDashboard() {
 			return roundedDoses;
 		};
 
-		// Analisi necessità aumento dose (incrementi di 6.25mg = 1/4 + 1/4 di compressa)
-		if (elevatedACTH || lowCortisol || hyponatremia) {
+		// Analisi necessità modifica dose (incrementi di 6.25mg = 1/4 + 1/4 di compressa)
+		// LOGICA ACTH: nell'Addison è normale che sia elevato; se nei limiti normali → possibile sovradosaggio
+		const normalACTH = r.acth !== null && r.acth !== undefined && r.acth >= 10 && r.acth <= 46;
+
+		// Valutazione Qualità della Vita - Stanchezza eccessiva (fatigue score ≥4/5 indica necessità aumento)
+		const excessiveFatigue = r.fatigue !== null && r.fatigue !== undefined && r.fatigue >= 4;
+
+		// Ipoglicemia - può essere registrata come episodio o come valore glicemico basso
+		const hypoglycemia = r.hypoglycemia || (r.glucose !== null && r.glucose !== undefined && r.glucose < 70);
+
+		if (normalACTH) {
+			// ACTH nella norma → possibile sovradosaggio di idrocortisone
+			recommendedDose = Math.max(roundToQuarter(currentDose - 6.25), 15); // Min 15mg secondo linee guida
+			dosageReason = "↘️ Riduzione dose: ACTH nei limiti normali suggerisce possibile sovradosaggio";
+		} else if (hyponatremia || excessiveFatigue || hypoglycemia) {
+			// Iponatremia, stanchezza eccessiva o ipoglicemia → sottodosaggio
+			let reasons = [];
+			if (hyponatremia) reasons.push("iponatremia");
+			if (excessiveFatigue) reasons.push("stanchezza eccessiva (QoL)");
+			if (hypoglycemia) reasons.push("ipoglicemia");
+
 			recommendedDose = Math.min(roundToQuarter(currentDose + 6.25), 50); // Max 50mg secondo linee guida
-			dosageReason = "↗️ Aumento dose per ACTH elevato/cortisolo basso/iponatremia";
+			dosageReason = "↗️ Aumento dose per: " + reasons.join(", ");
 		} else if (hypertension && !hypokaliemia) {
 			recommendedDose = Math.max(roundToQuarter(currentDose - 6.25), 15); // Min 15mg secondo linee guida
 			dosageReason = "↘️ Riduzione dose per ipertensione ben controllata";
@@ -1084,21 +2087,55 @@ export default function AddisonDashboard() {
 			recommendedDose = roundToQuarter(currentDose);
 		}
 
-		// Schema posologico ottimale garantendo quarti di compressa
-		let morningDose, middayDose, eveningDose;
-		if (recommendedDose <= 25) {
-			// Doppia somministrazione per dosi ≤25mg
-			const doses = distributeDoseInQuarters(recommendedDose, [0.67, 0.33]);
-			morningDose = doses[0];  // 2/3 della dose
-			middayDose = doses[1];   // 1/3 della dose  
-			eveningDose = 0;
-		} else {
-			// Tripla somministrazione per dosi >25mg
-			const doses = distributeDoseInQuarters(recommendedDose, [0.5, 0.3, 0.2]);
-			morningDose = doses[0];  // 50%
-			middayDose = doses[1];   // 30%
-			eveningDose = doses[2];  // 20%
+		// ===== AGGIUSTAMENTO PER INTERFERENZE FARMACOLOGICHE ===== //
+		let drugAdjustedDose = recommendedDose;
+		let drugAdjustmentNote = "";
+
+		if (drugAnalysis.detected.length > 0 && drugAnalysis.totalDoseAdjustment !== 0) {
+			const adjustmentFactor = 1 + (drugAnalysis.totalDoseAdjustment / 100);
+			drugAdjustedDose = roundToQuarter(recommendedDose * adjustmentFactor);
+
+			// Assicuriamoci di rispettare i limiti
+			drugAdjustedDose = Math.max(15, Math.min(50, drugAdjustedDose));
+
+			const adjustmentPercent = Math.abs(drugAnalysis.totalDoseAdjustment);
+			const direction = drugAnalysis.totalDoseAdjustment > 0 ? 'AUMENTO' : 'RIDUZIONE';
+
+			drugAdjustmentNote = `\n\n💊 AGGIUSTAMENTO PER INTERFERENZE FARMACOLOGICHE:\n` +
+				`• ${direction} dose del ${adjustmentPercent}% per interazioni farmacologiche\n` +
+				`• Dose base clinica: ${recommendedDose}mg → Dose aggiustata: ${drugAdjustedDose}mg\n` +
+				`• Farmaci rilevati: ${drugAnalysis.detected.map(d => d.drugName).join(', ')}`;
+
+			// Aggiorna la dose raccomandata
+			recommendedDose = drugAdjustedDose;
+
+			// Aggiorna il motivo del dosaggio
+			if (dosageReason) {
+				dosageReason += drugAdjustmentNote;
+			} else {
+				dosageReason = "💊 Aggiustamento per interferenze farmacologiche" + drugAdjustmentNote;
+			}
 		}
+
+		// ===== SCHEMA POSOLOGICO OTTIMIZZATO ===== //
+		const optimalSchedule = selectOptimalDosingSchedule(
+			recommendedDose,
+			{
+				morningFatigue: r.fatigue !== null && r.fatigue >= 4,
+				afternoonFatigue: r.workCapacity !== null && r.workCapacity <= 2,
+				eveningFatigue: r.socialLife !== null && r.socialLife <= 2,
+				sleepDisturbance: r.sleepQuality !== null && r.sleepQuality <= 2,
+				nightSymptoms: false
+			},
+			avgQoLScoreForERHC
+		);
+
+		// Usa lo schema ottimizzato
+		let morningDose = optimalSchedule.doses[0];
+		let middayDose = optimalSchedule.doses[1];
+		let eveningDose = optimalSchedule.doses[2] || 0;
+		let scheduleRationale = optimalSchedule.rationale;
+		let scheduleOptimizations = optimalSchedule.optimizationFactors;
 
 		// ===== RACCOMANDAZIONI TERAPIA MINERALCORTICOIDE ===== //
 		let fludroRecommendation = currentTherapy.florinef;
@@ -1121,6 +2158,15 @@ export default function AddisonDashboard() {
 		}
 		if (elevatedRenin || fludroRecommendation !== currentTherapy.florinef) {
 			monitoring.push("📅 Controllo renina in 4-6 settimane");
+		}
+
+		// Aggiungi monitoraggi specifici per interferenze farmacologiche
+		if (drugAnalysis.requiresMonitoring.length > 0) {
+			monitoring.push(""); // Spazio
+			monitoring.push("💊 MONITORAGGI PER INTERAZIONI FARMACOLOGICHE:");
+			drugAnalysis.requiresMonitoring.forEach(mon => {
+				monitoring.push(`  • ${mon}`);
+			});
 		}
 
 		// ===== GESTIONE STRESS E SITUAZIONI SPECIALI ===== //
@@ -1306,11 +2352,139 @@ export default function AddisonDashboard() {
 			finalRecommendation = finalRecommendation.concat(alerts);
 		}
 
+		// ===== SEZIONE INTERFERENZE FARMACOLOGICHE ===== //
+		if (drugAnalysis.detected.length > 0) {
+			finalRecommendation.push("");
+			finalRecommendation.push("💊 INTERFERENZE FARMACOLOGICHE RILEVATE");
+			finalRecommendation.push("=".repeat(45));
+
+			// Riepilogo interazioni
+			finalRecommendation.push("");
+			finalRecommendation.push(`📋 FARMACI RILEVATI: ${drugAnalysis.detected.length}`);
+
+			// Dettagli per ogni farmaco
+			drugAnalysis.detected.forEach(drug => {
+				const severityEmoji = drug.severity === 'critical' ? '🚨' :
+					drug.severity === 'major' ? '⚠️' :
+						drug.severity === 'moderate' ? '⚡' : 'ℹ️';
+
+				finalRecommendation.push("");
+				finalRecommendation.push(`${severityEmoji} ${drug.drugName.toUpperCase()} (${drug.severity.toUpperCase()})`);
+				finalRecommendation.push(`   Varianti rilevate: ${drug.detectedVariants.join(', ')}`);
+
+				if (drug.doseAdjustment !== 0) {
+					const sign = drug.doseAdjustment > 0 ? '+' : '';
+					finalRecommendation.push(`   Aggiustamento dose: ${sign}${drug.doseAdjustment}%`);
+				}
+
+				if (drug.recommendations.length > 0) {
+					finalRecommendation.push(`   Raccomandazioni:`);
+					drug.recommendations.forEach(rec => {
+						finalRecommendation.push(`     • ${rec}`);
+					});
+				}
+			});
+
+			// Effetto totale
+			if (drugAnalysis.totalDoseAdjustment !== 0) {
+				finalRecommendation.push("");
+				finalRecommendation.push("📊 EFFETTO CUMULATIVO:");
+				const sign = drugAnalysis.totalDoseAdjustment > 0 ? '+' : '';
+				finalRecommendation.push(`   Aggiustamento totale dose: ${sign}${drugAnalysis.totalDoseAdjustment}%`);
+				finalRecommendation.push(`   Dose base clinica: ${drugAdjustedDose / (1 + drugAnalysis.totalDoseAdjustment / 100)} mg`);
+				finalRecommendation.push(`   Dose aggiustata finale: ${drugAdjustedDose} mg`);
+			}
+
+			// Raccomandazioni generali
+			if (drugAnalysis.recommendations.length > 0) {
+				finalRecommendation.push("");
+				finalRecommendation.push("📌 RACCOMANDAZIONI GENERALI:");
+				drugAnalysis.recommendations.forEach(rec => {
+					finalRecommendation.push(`   • ${rec}`);
+				});
+			}
+		}
+
 		if (erHcRecommendation) {
 			finalRecommendation.push("");
 			finalRecommendation.push("🔬 FORMULAZIONI AVANZATE (ER-HC)");
 			finalRecommendation.push("-".repeat(35));
 			finalRecommendation.push(erHcRecommendation);
+
+			// Aggiungi protocollo di switch se candidato buono/eccellente
+			if (erHcScore.totalScore >= 60) {
+				const switchToPlenadren = generateSwitchProtocol('cortisone_acetate', 'plenadren', currentDose);
+				const switchToEfmody = generateSwitchProtocol('cortisone_acetate', 'efmody', currentDose);
+
+				finalRecommendation.push("");
+				finalRecommendation.push("🔄 PROTOCOLLI DI SWITCH (se approvato)");
+				finalRecommendation.push("=".repeat(40));
+
+				// Protocollo Plenadren
+				finalRecommendation.push("");
+				finalRecommendation.push(`📋 OPZIONE A: SWITCH A PLENADREN`);
+				finalRecommendation.push(`Dose attuale CA: ${switchToPlenadren.currentDose}mg → Dose target Plenadren: ${switchToPlenadren.targetDose}mg`);
+				finalRecommendation.push(`Durata switch: ${switchToPlenadren.durationDays} giorni`);
+				finalRecommendation.push("");
+				finalRecommendation.push("📅 PIANO DETTAGLIATO:");
+				switchToPlenadren.steps.forEach(step => {
+					finalRecommendation.push(`Giorno ${step.day}:`);
+					if (step.oldFormulationDose > 0) {
+						finalRecommendation.push(`  • ${switchToPlenadren.fromFormulation}: ${step.oldFormulationDose}mg`);
+					}
+					if (step.newFormulationDose > 0) {
+						finalRecommendation.push(`  • ${switchToPlenadren.toFormulation}: ${step.newFormulationDose}mg`);
+					}
+					finalRecommendation.push(`  ℹ️  ${step.instructions}`);
+					finalRecommendation.push("");
+				});
+
+				finalRecommendation.push("⚠️ AVVERTENZE IMPORTANTI:");
+				switchToPlenadren.warnings.forEach(w => finalRecommendation.push(w));
+
+				finalRecommendation.push("");
+				finalRecommendation.push("📊 MONITORAGGIO POST-SWITCH:");
+				switchToPlenadren.monitoring.forEach(m => finalRecommendation.push(m));
+
+				// Protocollo Efmody
+				if (r.fatigue && r.fatigue >= 4) {
+					finalRecommendation.push("");
+					finalRecommendation.push("─".repeat(40));
+					finalRecommendation.push("");
+					finalRecommendation.push(`📋 OPZIONE B: SWITCH A EFMODY (per astenia mattutina)`);
+					finalRecommendation.push(`Dose attuale CA: ${switchToEfmody.currentDose}mg → Dose target Efmody: ${switchToEfmody.targetDose}mg`);
+					finalRecommendation.push("");
+					finalRecommendation.push("📅 SCHEMA CIRCADIANO:");
+					finalRecommendation.push(`  • Sera (23:00): ${Math.round(switchToEfmody.targetDose * 0.67 * 2) / 2}mg`);
+					finalRecommendation.push(`  • Mattina (07:00): ${Math.round(switchToEfmody.targetDose * 0.33 * 2) / 2}mg`);
+					finalRecommendation.push("");
+					finalRecommendation.push("💡 VANTAGGI SPECIFICI:");
+					finalRecommendation.push("  • Picco cortisolo fisiologico al risveglio");
+					finalRecommendation.push("  • Migliore energia mattutina");
+					finalRecommendation.push("  • Qualità del sonno ottimizzata");
+				}
+
+				finalRecommendation.push("");
+				finalRecommendation.push("🏥 REQUISITI PRE-SWITCH:");
+				finalRecommendation.push("  • Approvazione specialista endocrinologo");
+				finalRecommendation.push("  • Valutazione funzionalità gastrointestinale");
+				finalRecommendation.push("  • Counseling su costi e aspettative");
+				finalRecommendation.push("  • Educazione protocolli stress con ER-HC");
+				finalRecommendation.push("  • Disponibilità backup IR-HC per emergenze");
+			}
+		}
+
+		// Aggiungi razionale schema temporale
+		if (scheduleOptimizations.length > 0) {
+			finalRecommendation.push("");
+			finalRecommendation.push("⏰ RAZIONALE SCHEMA TEMPORALE");
+			finalRecommendation.push("-".repeat(35));
+			finalRecommendation.push(`Schema selezionato: ${scheduleRationale}`);
+			finalRecommendation.push("");
+			finalRecommendation.push("Fattori considerati:");
+			scheduleOptimizations.forEach(factor => {
+				finalRecommendation.push(`  • ${factor}`);
+			});
 		}
 
 		if (qolRecommendations.length > 0) {
@@ -1332,6 +2506,30 @@ export default function AddisonDashboard() {
 		finalRecommendation.push("-".repeat(45));
 		finalRecommendation = finalRecommendation.concat(stressProtocols);
 
+		finalRecommendation.push("");
+		finalRecommendation.push("📊 TABELLA CONVERSIONE FORMULAZIONI");
+		finalRecommendation.push("-".repeat(50));
+		finalRecommendation.push("Dose equivalenti per terapia sostitutiva:");
+		finalRecommendation.push("");
+
+		const caRef = currentDose;
+		const hcDose = convertDoseBetweenFormulations(caRef, 'cortisone_acetate', 'hydrocortisone');
+		const plenadrenDose = convertDoseBetweenFormulations(caRef, 'cortisone_acetate', 'plenadren');
+		const efmodyDose = convertDoseBetweenFormulations(caRef, 'cortisone_acetate', 'efmody');
+
+		finalRecommendation.push(`┌─────────────────────────┬──────────────┬─────────────┐`);
+		finalRecommendation.push(`│ Formulazione            │ Dose eq.     │ Somm./die   │`);
+		finalRecommendation.push(`├─────────────────────────┼──────────────┼─────────────┤`);
+		finalRecommendation.push(`│ Cortone Acetato (IR)    │ ${caRef.toFixed(1)} mg    │ 2-3 volte   │`);
+		finalRecommendation.push(`│ Idrocortisone (IR)      │ ${hcDose.toFixed(1)} mg    │ 3 volte     │`);
+		finalRecommendation.push(`│ Plenadren (ER)          │ ${plenadrenDose.toFixed(1)} mg    │ 1 volta     │`);
+		finalRecommendation.push(`│ Efmody (ER)             │ ${efmodyDose.toFixed(1)} mg    │ 2 volte     │`);
+		finalRecommendation.push(`└─────────────────────────┴──────────────┴─────────────┘`);
+		finalRecommendation.push("");
+		finalRecommendation.push("💡 Note:");
+		finalRecommendation.push("• Dosi ER ridotte per minore esposizione complessiva");
+		finalRecommendation.push("• Conversioni da verificare individualmente");
+		finalRecommendation.push("• Switch richiede supervisione specialistica");
 		finalRecommendation.push("");
 		finalRecommendation.push("⚠️ DISCLAIMER");
 		finalRecommendation.push("-".repeat(15));
@@ -1620,13 +2818,20 @@ export default function AddisonDashboard() {
 												<TableHead>K</TableHead>
 												<TableHead>ACTH</TableHead>
 												<TableHead>Cort</TableHead>
+												<TableHead>Cort 24h</TableHead>
+												<TableHead>Cort 1.5h</TableHead>
 												<TableHead>Renina</TableHead>
 												<TableHead>PA sup sys</TableHead>
 												<TableHead>PA sup dia</TableHead>
 												<TableHead>PA ort sys</TableHead>
 												<TableHead>PA ort dia</TableHead>
+												<TableHead>Glicemia</TableHead>
+												<TableHead>Ipoglic.</TableHead>
 												<TableHead>Sale</TableHead>
 												<TableHead>Vert</TableHead>
+												<TableHead>Glucocort.</TableHead>
+												<TableHead>Florinef</TableHead>
+												<TableHead>Altri Farm.</TableHead>
 												<TableHead>QoL Score</TableHead>
 											</TableRow>
 										</TableHeader>
@@ -1638,13 +2843,32 @@ export default function AddisonDashboard() {
 													<TableCell>{displayValue(r.k, 'k')}</TableCell>
 													<TableCell>{displayValue(r.acth, 'acth')}</TableCell>
 													<TableCell>{displayValue(r.cortisol, 'cortisol')}</TableCell>
+													<TableCell className={r.cortisolUrinary24h && r.cortisolUrinary24h > 100 ? "text-red-600 font-semibold" : ""}>
+														{displayValue(r.cortisolUrinary24h, 'cortisol')}
+													</TableCell>
+													<TableCell className={r.cortisolPost90min && r.cortisolPost90min > 25 ? "text-red-600 font-semibold" : ""}>
+														{displayValue(r.cortisolPost90min, 'cortisol')}
+													</TableCell>
 													<TableCell>{displayValue(r.renin, 'renin')}</TableCell>
 													<TableCell>{displayValue(r.bpSupSys, 'bp')}</TableCell>
 													<TableCell>{displayValue(r.bpSupDia, 'bp')}</TableCell>
 													<TableCell>{displayValue(r.bpOrthSys, 'bp')}</TableCell>
 													<TableCell>{displayValue(r.bpOrthDia, 'bp')}</TableCell>
+													<TableCell className={r.glucose && r.glucose < 70 ? "text-red-600 font-semibold" : ""}>
+														{r.glucose ? `${r.glucose} mg/dL` : "-"}
+													</TableCell>
+													<TableCell>{r.hypoglycemia ? "Sì" : "No"}</TableCell>
 													<TableCell>{r.craveSalt ? "Sì" : "No"}</TableCell>
 													<TableCell>{r.vertigo ? "Sì" : "No"}</TableCell>
+													<TableCell className="text-xs max-w-[120px] truncate" title={r.glucocorticoidDose || ""}>
+														{r.glucocorticoidDose || "-"}
+													</TableCell>
+													<TableCell className="text-xs" title={r.florinefDose || ""}>
+														{r.florinefDose || "-"}
+													</TableCell>
+													<TableCell className="text-xs max-w-[120px] truncate" title={r.otherMedications || ""}>
+														{r.otherMedications || "-"}
+													</TableCell>
 													<TableCell>
 														{(() => {
 															const qolParams = [r.fatigue, r.moodChanges, r.workCapacity, r.socialLife,
@@ -3062,6 +4286,45 @@ export default function AddisonDashboard() {
 									</div>
 								</div>
 
+								{/* Nuova sezione: Monitoraggio Sovradosaggio Glucocorticoidi */}
+								<div>
+									<h3 className="font-medium text-purple-800 mb-3 bg-purple-50 p-2 rounded">
+										⚠️ Monitoraggio Sovradosaggio Glucocorticoidi
+									</h3>
+									<div className="space-y-3">
+										<div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+											<div className="font-medium text-purple-800 mb-3">
+												📌 Parametri per valutare il sovradosaggio della terapia con glucocorticoidi:
+											</div>
+											<div className="space-y-3">
+												<div className="bg-white p-3 rounded border border-purple-200">
+													<div className="font-semibold text-purple-900">Cortisolo libero urinario 24h</div>
+													<div className="text-lg font-bold text-purple-600 mt-1">10-100 μg/24h</div>
+													<div className="text-sm text-gray-600 mt-1">(28-276 nmol/24h)</div>
+													<div className="text-sm text-red-600 mt-2 font-medium">
+														⚠️ Valori elevati (&gt;100 μg/24h) indicano possibile sovradosaggio
+													</div>
+												</div>
+												<div className="bg-white p-3 rounded border border-purple-200">
+													<div className="font-semibold text-purple-900">Cortisolo post-dose (1.5h dopo farmaco)</div>
+													<div className="text-lg font-bold text-purple-600 mt-1">&lt;20 μg/dL</div>
+													<div className="text-sm text-gray-600 mt-1">(&lt;552 nmol/L)</div>
+													<div className="text-sm text-red-600 mt-2 font-medium">
+														⚠️ Valori &gt;25 μg/dL (&gt;690 nmol/L) indicano possibile sovradosaggio
+													</div>
+												</div>
+											</div>
+											<div className="mt-3 p-3 bg-yellow-50 border border-yellow-300 rounded text-sm">
+												<p className="font-medium text-yellow-900">💡 Nota clinica:</p>
+												<p className="text-yellow-800 mt-1">
+													Se entrambi i parametri risultano elevati, è necessario rivalutare il dosaggio
+													della terapia con glucocorticoidi in collaborazione con l'endocrinologo.
+												</p>
+											</div>
+										</div>
+									</div>
+								</div>
+
 								{/* Fattori di conversione */}
 								<div>
 									<h3 className="font-medium text-green-800 mb-3 bg-green-50 p-2 rounded">🔄 Fattori di conversione</h3>
@@ -3386,6 +4649,54 @@ export default function AddisonDashboard() {
 											</div>
 										</div>
 
+										{/* Cortisolo libero urinario 24h */}
+										<div>
+											<label className="block text-sm font-medium mb-1">
+												Cortisolo libero urinario 24h
+												<span className="text-xs text-gray-500 ml-1">(sovradosaggio se elevato)</span>
+											</label>
+											<div className="flex gap-2">
+												<Input
+													name="cortUrinary24h"
+													placeholder="Cortisolo 24h"
+													className="flex-1"
+													title="Valori elevati indicano possibile sovradosaggio di glucocorticoidi"
+												/>
+												<select
+													className="border rounded px-2 py-1 text-xs"
+													value={inputUnits.cortisol}
+													onChange={(e) => setInputUnits({ ...inputUnits, cortisol: e.target.value as 'μg/dL' | 'nmol/L' })}
+												>
+													<option value="μg/dL">μg/24h</option>
+													<option value="nmol/L">nmol/24h</option>
+												</select>
+											</div>
+										</div>
+
+										{/* Cortisolo post 90 min */}
+										<div>
+											<label className="block text-sm font-medium mb-1">
+												Cortisolo (1.5h dopo farmaco)
+												<span className="text-xs text-gray-500 ml-1">(sovradosaggio se elevato)</span>
+											</label>
+											<div className="flex gap-2">
+												<Input
+													name="cortPost90min"
+													placeholder="Cortisolo post-dose"
+													className="flex-1"
+													title="Cortisolo dosato 1 ora e mezza dopo l'assunzione del farmaco. Valori elevati indicano possibile sovradosaggio"
+												/>
+												<select
+													className="border rounded px-2 py-1 text-xs"
+													value={inputUnits.cortisol}
+													onChange={(e) => setInputUnits({ ...inputUnits, cortisol: e.target.value as 'μg/dL' | 'nmol/L' })}
+												>
+													<option value="μg/dL">μg/dL</option>
+													<option value="nmol/L">nmol/L</option>
+												</select>
+											</div>
+										</div>
+
 										{/* Renin */}
 										<div>
 											<label className="block text-sm font-medium mb-1">Renina</label>
@@ -3406,6 +4717,40 @@ export default function AddisonDashboard() {
 													<option value="mUI/L">mUI/L</option>
 												</select>
 											</div>
+										</div>
+									</div>
+								</div>
+
+								{/* Info sui nuovi parametri cortisolo per sovradosaggio */}
+								<div className="border-t pt-4">
+									<div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+										<h4 className="font-semibold text-yellow-900 mb-2">
+											ℹ️ Informazioni sui parametri di monitoraggio del cortisolo
+										</h4>
+										<div className="text-sm text-yellow-800 space-y-2">
+											<p className="font-medium">
+												I due nuovi parametri (Cortisolo libero urinario 24h e Cortisolo post 1.5h) servono per identificare un possibile sovradosaggio della terapia con glucocorticoidi.
+											</p>
+											<div className="mt-3">
+												<p className="font-semibold mb-1">📊 Valori di riferimento e interpretazione:</p>
+												<ul className="list-disc list-inside space-y-1 ml-2">
+													<li><strong>Cortisolo libero urinario 24h:</strong>
+														<ul className="list-circle list-inside ml-4 mt-1">
+															<li>Range normale: 10-100 μg/24h (28-276 nmol/24h)</li>
+															<li>⚠️ Valori elevati suggeriscono sovradosaggio</li>
+														</ul>
+													</li>
+													<li><strong>Cortisolo 1.5h dopo farmaco:</strong>
+														<ul className="list-circle list-inside ml-4 mt-1">
+															<li>Valori attesi: {'<'}20 μg/dL ({'<'}552 nmol/L)</li>
+															<li>⚠️ Valori {'>'}25 μg/dL ({'>'}690 nmol/L) indicano possibile sovradosaggio</li>
+														</ul>
+													</li>
+												</ul>
+											</div>
+											<p className="mt-3 text-xs italic">
+												💡 <strong>Hai bisogno di altri livelli di riferimento?</strong> Consulta la sezione "Valori di Riferimento" nel tab Dati per vedere tutti i range normali dei parametri di laboratorio.
+											</p>
 										</div>
 									</div>
 								</div>
@@ -3452,14 +4797,101 @@ export default function AddisonDashboard() {
 									</div>
 
 									<div className="grid grid-cols-2 gap-4 mt-4">
+										<div>
+											<label className="block text-sm font-medium mb-1">🩸 Glicemia</label>
+											<div className="flex gap-2">
+												<Input name="glucose" placeholder="es. 85" type="number" step="0.1" />
+												<span className="text-xs self-center text-gray-600">mg/dL</span>
+											</div>
+											<div className="text-xs text-gray-600 mt-1">
+												Range: 70-100 mg/dL (a digiuno)
+											</div>
+										</div>
+									</div>
+
+									<div className="grid grid-cols-2 gap-4 mt-4">
+										<label className="flex items-center">
+											<input type="checkbox" name="hypoglycemia" className="mr-2" />
+											Episodi ipoglicemici recenti ({'<'}70 mg/dL)
+										</label>
 										<label className="flex items-center">
 											<input type="checkbox" name="crave" className="mr-2" />
 											Craving sale
 										</label>
+									</div>
+
+									<div className="grid grid-cols-2 gap-4 mt-2">
 										<label className="flex items-center">
 											<input type="checkbox" name="vert" className="mr-2" />
 											Vertigini
 										</label>
+									</div>
+								</div>
+
+								{/* Current Therapy Section */}
+								<div className="border-t pt-4">
+									<h3 className="font-medium text-purple-800 mb-3 bg-purple-50 p-2 rounded">
+										💊 Terapia Attuale
+									</h3>
+									<div className="text-xs text-gray-600 mb-3">
+										Inserisci la terapia in corso al momento degli esami per valutare l'adeguatezza del dosaggio ed eventuali interferenze farmacologiche.
+									</div>
+
+									<div className="grid grid-cols-1 gap-4">
+										{/* Glucocorticoid Dose */}
+										<div>
+											<label className="block text-sm font-medium mb-1">
+												💊 Dosaggio Glucocorticoide
+											</label>
+											<Input
+												name="glucocorticoidDose"
+												placeholder="es. Cortisone Acetato 25mg (12.5mg mattina + 12.5mg sera)"
+												className="w-full"
+											/>
+											<div className="text-xs text-gray-500 mt-1">
+												Specifica il tipo di glucocorticoide e la distribuzione giornaliera delle dosi
+											</div>
+										</div>
+
+										{/* Florinef Dose */}
+										<div>
+											<label className="block text-sm font-medium mb-1">
+												💧 Dosaggio Florinef (Fludrocortisone)
+											</label>
+											<Input
+												name="florinefDose"
+												placeholder="es. 0.1mg al mattino"
+												className="w-full"
+											/>
+											<div className="text-xs text-gray-500 mt-1">
+												Specifica il dosaggio e l'orario di assunzione
+											</div>
+										</div>
+
+										{/* Other Medications */}
+										<div>
+											<label className="block text-sm font-medium mb-1">
+												🔬 Altri Farmaci Assunti
+											</label>
+											<textarea
+												name="otherMedications"
+												placeholder="es. Levotiroxina 100mcg, Metformina 500mg, ecc.&#10;Elenca eventuali altri farmaci per valutare possibili interferenze"
+												className="w-full border rounded px-3 py-2 text-sm min-h-[80px]"
+											/>
+											<div className="text-xs text-gray-500 mt-1">
+												Include tutti i farmaci assunti regolarmente (per tiroide, diabete, pressione, ecc.)
+											</div>
+										</div>
+									</div>
+
+									<div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
+										<p className="font-medium text-blue-900">💡 Perché è importante:</p>
+										<ul className="text-blue-800 mt-1 space-y-1 list-disc list-inside">
+											<li>Valutare se i valori ormonali sono coerenti con il dosaggio attuale</li>
+											<li>Identificare possibili sovradosaggi o sottodosaggi</li>
+											<li>Riconoscere interferenze farmacologiche (es. estrogeni, anticonvulsivanti, rifampicina)</li>
+											<li>Ottimizzare la terapia in base ai risultati degli esami</li>
+										</ul>
 									</div>
 								</div>
 

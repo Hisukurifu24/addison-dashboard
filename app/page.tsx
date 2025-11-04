@@ -1916,7 +1916,14 @@ export default function AddisonDashboard() {
 		// Ormoni
 		const elevatedACTH = r.acth !== null && r.acth !== undefined && r.acth > 145;
 		const lowCortisol = r.cortisol !== null && r.cortisol !== undefined && r.cortisol < 6;
-		const elevatedRenin = r.renin !== null && r.renin !== undefined && r.renin > 4.0;
+		// Renina ortostatismo: riferimento popolazione generale 4.4-4.6 mU/L
+		// NELL'ADDISON: renina fino a 42 mU/L è considerata NORMALE
+		// Renina < 4 mU/L → sovradosaggio florinef (troppo soppressa)
+		// Renina 4-42 mU/L → RANGE NORMALE per Addison (compenso ottimale)
+		// Renina > 42 mU/L → sottodosaggio florinef (serve più mineralcorticoide)
+		const lowRenin = r.renin !== null && r.renin !== undefined && r.renin < 4.0;
+		const normalAddisonRenin = r.renin !== null && r.renin !== undefined && r.renin >= 4.0 && r.renin <= 42.0;
+		const highRenin = r.renin !== null && r.renin !== undefined && r.renin > 42.0;
 
 		// Pressione arteriosa
 		const hypotension = (r.bpSupSys !== null && r.bpSupSys !== undefined && r.bpSupSys < 100) ||
@@ -2057,8 +2064,9 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 		};
 
 		// Analisi necessità modifica dose (incrementi di 6.25mg = 1/4 + 1/4 di compressa)
-		// LOGICA ACTH: nell'Addison è normale che sia elevato; se nei limiti normali → possibile sovradosaggio
-		const normalACTH = r.acth !== null && r.acth !== undefined && r.acth >= 10 && r.acth <= 46;
+		// LOGICA ACTH: nell'Addison è normale che sia elevato; se < 64 pg/mL → possibile sovradosaggio
+		// Riferimento ACTH: 7.2 - 63.5 pg/mL (valori inferiori a 64 indicano sovradosaggio)
+		const lowACTH = r.acth !== null && r.acth !== undefined && r.acth < 64;
 
 		// Valutazione Qualità della Vita - Stanchezza eccessiva (fatigue score ≥4/5 indica necessità aumento)
 		const excessiveFatigue = r.fatigue !== null && r.fatigue !== undefined && r.fatigue >= 4;
@@ -2066,10 +2074,10 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 		// Ipoglicemia - può essere registrata come episodio o come valore glicemico basso
 		const hypoglycemia = r.hypoglycemia || (r.glucose !== null && r.glucose !== undefined && r.glucose < 70);
 
-		if (normalACTH) {
-			// ACTH nella norma → possibile sovradosaggio di idrocortisone
+		if (lowACTH) {
+			// ACTH < 64 pg/mL → possibile sovradosaggio di glucocorticoide
 			recommendedDose = Math.max(roundToQuarter(currentDose - 6.25), 15); // Min 15mg secondo linee guida
-			dosageReason = "↘️ Riduzione dose: ACTH nei limiti normali suggerisce possibile sovradosaggio";
+			dosageReason = "↘️ Riduzione dose: ACTH < 64 pg/mL (riferimento: 7.2-63.5) suggerisce possibile sovradosaggio";
 		} else if (hyponatremia || excessiveFatigue || hypoglycemia) {
 			// Iponatremia, stanchezza eccessiva o ipoglicemia → sottodosaggio
 			let reasons = [];
@@ -2141,12 +2149,45 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 		let fludroRecommendation = currentTherapy.florinef;
 		let fludroReason = "Mantieni dosaggio attuale";
 
-		if (hyponatremia || elevatedRenin || orthostaticHypotension || saltCraving) {
+		// LOGICA RENINA per Addison:
+		// Renina < 4 mU/L → sovradosaggio florinef
+		// Renina 4-42 mU/L → NORMALE per Addison
+		// Renina > 42 mU/L → sottodosaggio florinef
+
+		// PRIORITÀ 1: Ipertensione o ipokaliemia (SEMPRE ridurre florinef - rischio cardiovascolare)
+		if (hypertension || hypokaliemia) {
+			fludroRecommendation = Math.max(currentTherapy.florinef - 0.025, 0.025);
+			let reasons = [];
+			if (hypertension) reasons.push("ipertensione (priorità cardiovascolare)");
+			if (hypokaliemia) reasons.push("ipokaliemia");
+			fludroReason = "↘️ Riduzione florinef per: " + reasons.join(", ");
+
+			// Aggiungi nota se renina è nel range normale o alta
+			if (normalAddisonRenin) {
+				fludroReason += "\n   ℹ️ Nota: renina nel range normale Addison (4-42 mU/L). Ipertensione indica necessità riduzione.";
+			} else if (highRenin) {
+				fludroReason += "\n   ⚠️ Nota: renina alta (>42 mU/L) ma ipertensione ha priorità per rischio CV. Monitorare renina da vicino.";
+			}
+		}
+		// PRIORITÀ 2: Renina troppo bassa (sovradosaggio confermato)
+		else if (lowRenin) {
+			fludroRecommendation = Math.max(currentTherapy.florinef - 0.025, 0.025);
+			fludroReason = "↘️ Riduzione florinef per: renina < 4 mU/L (sovradosaggio mineralcorticoide)";
+		}
+		// PRIORITÀ 3: Renina normale per Addison (4-42 mU/L) - mantenere dosaggio se no sintomi
+		else if (normalAddisonRenin && !hyponatremia && !orthostaticHypotension && !saltCraving) {
+			fludroRecommendation = currentTherapy.florinef;
+			fludroReason = "✅ Mantieni dosaggio: renina nel range ottimale Addison (4-42 mU/L)";
+		}
+		// PRIORITÀ 4: Segni di sottodosaggio (aumentare florinef)
+		else if (hyponatremia || highRenin || orthostaticHypotension || saltCraving) {
 			fludroRecommendation = Math.min(currentTherapy.florinef + 0.025, 0.2);
-			fludroReason = "↗️ Aumento per iponatremia/renina elevata/ipotensione ortostatica";
-		} else if (hypertension || hypokaliemia) {
-			fludroRecommendation = Math.max(currentTherapy.florinef - 0.025, 0.05);
-			fludroReason = "↘️ Riduzione per ipertensione/ipokaliemia";
+			let reasons = [];
+			if (hyponatremia) reasons.push("iponatremia");
+			if (highRenin) reasons.push("renina alta > 42 mU/L");
+			if (orthostaticHypotension) reasons.push("ipotensione ortostatica");
+			if (saltCraving) reasons.push("desiderio di sale");
+			fludroReason = "↗️ Aumento florinef per: " + reasons.join(", ");
 		}
 
 		// ===== MONITORAGGIO E CONTROLLI ===== //
@@ -2156,7 +2197,7 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 			monitoring.push("📅 Rivalutazione ACTH e cortisolo in 6-8 settimane");
 			monitoring.push("📅 Controllo pressione arteriosa settimanale");
 		}
-		if (elevatedRenin || fludroRecommendation !== currentTherapy.florinef) {
+		if (highRenin || fludroRecommendation !== currentTherapy.florinef) {
 			monitoring.push("📅 Controllo renina in 4-6 settimane");
 		}
 
@@ -2290,6 +2331,15 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 		}
 		if (elevatedACTH && lowCortisol) {
 			alerts.push("⚠️ ALERT: Controllo inadeguato - considerare ottimizzazione terapia");
+		}
+		if (lowACTH) {
+			alerts.push("⚠️ ALERT: ACTH < 64 pg/mL (rif: 7.2-63.5) - possibile sovradosaggio glucocorticoide");
+		}
+		if (lowRenin) {
+			alerts.push("⚠️ ALERT: Renina < 4 mU/L - possibile sovradosaggio mineralcorticoide (fludrocortisone)");
+		}
+		if (highRenin) {
+			alerts.push("⚠️ ALERT: Renina > 42 mU/L (normale Addison fino a 42) - possibile sottodosaggio mineralcorticoide");
 		}
 		if (saltCraving || vertigo) {
 			alerts.push("⚠️ ALERT: Sintomi suggestivi di ipoaldosteronismo - valutare fludrocortisone");
@@ -2576,18 +2626,22 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 		const enhancedEveningDose = currentPatient && predictiveResult.confidence > 70 ?
 			(predictiveResult.recommendedDose * currentPatient.responsePatterns.optimalDistribution[2] / 100) : eveningDose;
 
+		// Funzione per arrotondare a quarti di 25mg (6.25mg)
+		const roundToQuarterTablet = (dose: number) => Math.round(dose / 6.25) * 6.25;
+
 		setProposedTherapy({
 			cortisoneAcetate: {
-				morning: Math.round(enhancedMorningDose * 4) / 4,
-				midday: Math.round(enhancedMiddayDose * 4) / 4,
-				evening: Math.round(enhancedEveningDose * 4) / 4
+				morning: roundToQuarterTablet(enhancedMorningDose),
+				midday: roundToQuarterTablet(enhancedMiddayDose),
+				evening: roundToQuarterTablet(enhancedEveningDose)
 			},
 			florinef: fludroRecommendation
 		});
 	}
 
-	const upperRenin = () => 4;
-	const lowerRenin = () => 0.3; // placeholder
+	const upperRenin = () => 4.6; // Limite superiore range normale
+	const lowerRenin = () => 4.4; // Limite inferiore range normale
+	// Nota: nell'Addison ci si aspetta renina 2-3x la norma (circa 9-14 mU/L)
 
 	// Funzione per applicare la terapia proposta
 	function applyProposedTherapy() {
@@ -2602,18 +2656,18 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 	// Funzione di validazione per dosi in quarti
 	function validateQuarterDoses(therapy: CurrentTherapy): string[] {
 		const errors: string[] = [];
-		const roundToQuarter = (dose: number) => Math.round(dose * 4) / 4;
+		const roundToQuarterTablet = (dose: number) => Math.round(dose / 6.25) * 6.25;
 
 		// Valida cortisone acetato
 		const { morning, midday, evening } = therapy.cortisoneAcetate;
-		if (morning !== roundToQuarter(morning)) {
-			errors.push(`Dose mattutina ${morning}mg non è un quarto valido. Suggerito: ${roundToQuarter(morning)}mg`);
+		if (morning !== roundToQuarterTablet(morning)) {
+			errors.push(`Dose mattutina ${morning}mg non è un quarto valido. Suggerito: ${roundToQuarterTablet(morning)}mg`);
 		}
-		if (midday !== roundToQuarter(midday)) {
-			errors.push(`Dose mezzogiorno ${midday}mg non è un quarto valido. Suggerito: ${roundToQuarter(midday)}mg`);
+		if (midday !== roundToQuarterTablet(midday)) {
+			errors.push(`Dose mezzogiorno ${midday}mg non è un quarto valido. Suggerito: ${roundToQuarterTablet(midday)}mg`);
 		}
-		if (evening !== roundToQuarter(evening)) {
-			errors.push(`Dose serale ${evening}mg non è un quarto valido. Suggerito: ${roundToQuarter(evening)}mg`);
+		if (evening !== roundToQuarterTablet(evening)) {
+			errors.push(`Dose serale ${evening}mg non è un quarto valido. Suggerito: ${roundToQuarterTablet(evening)}mg`);
 		}
 
 		const totalDose = morning + midday + evening;
@@ -2792,12 +2846,13 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 
 				{/* Main Content Tabs */}
 				<Tabs defaultValue="records" className="lg:col-span-3 flex flex-col">
-					<TabsList className="self-start grid w-full grid-cols-8">
+					<TabsList className="self-start grid w-full grid-cols-9">
 						<TabsTrigger value="records">Records</TabsTrigger>
-						<TabsTrigger value="patient">� Paziente</TabsTrigger>
+						<TabsTrigger value="patient">👤 Paziente</TabsTrigger>
 						<TabsTrigger value="ai-insights">🧠 AI Insights</TabsTrigger>
 						<TabsTrigger value="qol">💭 QoV</TabsTrigger>
 						<TabsTrigger value="terapia">Terapia</TabsTrigger>
+						<TabsTrigger value="terapia-proposta">💊 Proposta</TabsTrigger>
 						<TabsTrigger value="piano">Piano</TabsTrigger>
 						<TabsTrigger value="kit">Kit</TabsTrigger>
 						<TabsTrigger value="riferimenti">Rif.</TabsTrigger>
@@ -3847,6 +3902,442 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 						</Card>
 					</TabsContent>
 
+					<TabsContent value="terapia-proposta" className="mt-4">
+						<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+							<div className="space-y-6">
+								{/* Header con info paziente se disponibile */}
+								{currentPatient && (
+									<Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
+										<CardContent className="p-4">
+											<div className="flex items-center justify-between">
+												<div>
+													<h3 className="font-semibold text-lg text-blue-900">
+														{currentPatient.firstName} {currentPatient.lastName}
+													</h3>
+													<p className="text-sm text-blue-700">
+														{currentPatient.demographics.age} anni • {currentPatient.demographics.sex === 'M' ? 'Maschio' : 'Femmina'} • 
+														{currentPatient.demographics.weight}kg • {currentPatient.demographics.height}cm
+													</p>
+												</div>
+												<div className="text-right">
+													<div className="text-xs text-blue-600">Diagnosi</div>
+													<div className="font-medium text-blue-900">{currentPatient.demographics.diagnosis}</div>
+												</div>
+											</div>
+										</CardContent>
+									</Card>
+								)}
+
+								{/* TERAPIA GLUCOCORTICOIDE PROPOSTA */}
+								<Card className="border-2 border-blue-300 shadow-lg">
+									<CardHeader className="bg-gradient-to-r from-blue-600 to-blue-700 text-white">
+										<CardTitle className="text-2xl flex items-center gap-3">
+											💊 TERAPIA GLUCOCORTICOIDE PROPOSTA
+										</CardTitle>
+										<p className="text-blue-100 text-sm mt-2">
+											Dosaggio ottimizzato basato sui parametri clinici e laboratoristici
+										</p>
+									</CardHeader>
+									<CardContent className="p-6 space-y-6">
+										{proposedTherapy ? (
+											<>
+												{/* Dose Totale Giornaliera */}
+												<div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-6">
+													<div className="text-center">
+														<div className="text-sm font-medium text-blue-700 mb-2">DOSE TOTALE GIORNALIERA</div>
+														<div className="text-5xl font-bold text-blue-900 mb-2">
+															{(proposedTherapy.cortisoneAcetate.morning + 
+															  proposedTherapy.cortisoneAcetate.midday + 
+															  proposedTherapy.cortisoneAcetate.evening).toFixed(2)} mg
+														</div>
+														<div className="text-sm text-blue-600">Cortisone Acetato</div>
+													</div>
+												</div>
+
+												{/* Schema Posologico */}
+												<div className="bg-white border-2 border-gray-200 rounded-xl p-6">
+													<h3 className="font-bold text-lg text-gray-800 mb-4 flex items-center gap-2">
+														⏰ SCHEMA POSOLOGICO
+													</h3>
+													<div className="space-y-4">
+														{/* Mattina */}
+														<div className="flex items-center justify-between bg-amber-50 p-4 rounded-lg border-l-4 border-amber-500">
+															<div>
+																<div className="font-semibold text-amber-900">☀️ MATTINA (07:30)</div>
+																<div className="text-sm text-amber-700">Assunzione principale</div>
+															</div>
+															<div className="text-right">
+																<div className="text-3xl font-bold text-amber-900">
+																	{(() => {
+																		const mg = proposedTherapy.cortisoneAcetate.morning;
+																		const quarters = mg / 6.25;
+																		if (quarters === 1) return "¼ compressa";
+																		if (quarters === 2) return "½ compressa";
+																		if (quarters === 3) return "¾ compressa";
+																		if (quarters === 4) return "1 compressa";
+																		const whole = Math.floor(quarters / 4);
+																		const remainder = quarters % 4;
+																		if (remainder === 0) return `${whole} ${whole === 1 ? 'compressa' : 'compresse'}`;
+																		if (remainder === 1) return `${whole} cpr + ¼`;
+																		if (remainder === 2) return `${whole} cpr + ½`;
+																		if (remainder === 3) return `${whole} cpr + ¾`;
+																		return `${quarters.toFixed(1)} quarti`;
+																	})()}
+																</div>
+																<div className="text-sm text-amber-600 font-medium mt-1">
+																	{proposedTherapy.cortisoneAcetate.morning} mg
+																</div>
+															</div>
+														</div>
+
+														{/* Mezzogiorno */}
+														<div className="flex items-center justify-between bg-orange-50 p-4 rounded-lg border-l-4 border-orange-500">
+															<div>
+																<div className="font-semibold text-orange-900">🌤️ MEZZOGIORNO (12:30)</div>
+																<div className="text-sm text-orange-700">Dose intermedia</div>
+															</div>
+															<div className="text-right">
+																<div className="text-3xl font-bold text-orange-900">
+																	{(() => {
+																		const mg = proposedTherapy.cortisoneAcetate.midday;
+																		const quarters = mg / 6.25;
+																		if (quarters === 1) return "¼ compressa";
+																		if (quarters === 2) return "½ compressa";
+																		if (quarters === 3) return "¾ compressa";
+																		if (quarters === 4) return "1 compressa";
+																		const whole = Math.floor(quarters / 4);
+																		const remainder = quarters % 4;
+																		if (remainder === 0) return `${whole} ${whole === 1 ? 'compressa' : 'compresse'}`;
+																		if (remainder === 1) return `${whole} cpr + ¼`;
+																		if (remainder === 2) return `${whole} cpr + ½`;
+																		if (remainder === 3) return `${whole} cpr + ¾`;
+																		return `${quarters.toFixed(1)} quarti`;
+																	})()}
+																</div>
+																<div className="text-sm text-orange-600 font-medium mt-1">
+																	{proposedTherapy.cortisoneAcetate.midday} mg
+																</div>
+															</div>
+														</div>
+
+														{/* Sera (se presente) */}
+														{proposedTherapy.cortisoneAcetate.evening > 0 && (
+															<div className="flex items-center justify-between bg-indigo-50 p-4 rounded-lg border-l-4 border-indigo-500">
+																<div>
+																	<div className="font-semibold text-indigo-900">🌙 SERA (17:30)</div>
+																	<div className="text-sm text-indigo-700">Dose serale</div>
+																</div>
+																<div className="text-right">
+																	<div className="text-3xl font-bold text-indigo-900">
+																		{(() => {
+																			const mg = proposedTherapy.cortisoneAcetate.evening;
+																			const quarters = mg / 6.25;
+																			if (quarters === 1) return "¼ compressa";
+																			if (quarters === 2) return "½ compressa";
+																			if (quarters === 3) return "¾ compressa";
+																			if (quarters === 4) return "1 compressa";
+																			const whole = Math.floor(quarters / 4);
+																			const remainder = quarters % 4;
+																			if (remainder === 0) return `${whole} ${whole === 1 ? 'compressa' : 'compresse'}`;
+																			if (remainder === 1) return `${whole} cpr + ¼`;
+																			if (remainder === 2) return `${whole} cpr + ½`;
+																			if (remainder === 3) return `${whole} cpr + ¾`;
+																			return `${quarters.toFixed(1)} quarti`;
+																		})()}
+																	</div>
+																	<div className="text-sm text-indigo-600 font-medium mt-1">
+																		{proposedTherapy.cortisoneAcetate.evening} mg
+																	</div>
+																</div>
+															</div>
+														)}
+													</div>
+
+													{/* Note importanti */}
+													<div className="mt-4 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+														<div className="flex gap-2">
+															<span className="text-yellow-600 font-bold">⚠️</span>
+															<div className="text-sm text-yellow-800">
+																<p className="font-semibold mb-1">Importante:</p>
+																<ul className="list-disc list-inside space-y-1">
+																	<li>Le compresse di Cortisone Acetato 25mg possono essere divise solo in ¼, ½ o 1 compressa intera</li>
+																	<li>Assumere sempre con del cibo per ridurre irritazione gastrica</li>
+																	<li>Non modificare il dosaggio senza consulto medico</li>
+																</ul>
+															</div>
+														</div>
+													</div>
+												</div>
+
+												{/* EQUIVALENZE FORMULAZIONI */}
+												<div className="bg-gradient-to-br from-purple-50 to-blue-50 border-2 border-purple-300 rounded-xl p-6">
+													<h3 className="font-bold text-xl text-purple-900 mb-4 flex items-center gap-2">
+														🔄 EQUIVALENZE FORMULAZIONI GLUCOCORTICOIDI
+													</h3>
+													
+													{(() => {
+														const totalDose = proposedTherapy.cortisoneAcetate.morning + 
+																		proposedTherapy.cortisoneAcetate.midday + 
+																		proposedTherapy.cortisoneAcetate.evening;
+														
+														const hcDose = convertDoseBetweenFormulations(totalDose, 'cortisone_acetate', 'hydrocortisone');
+														const plenadrenDose = convertDoseBetweenFormulations(totalDose, 'cortisone_acetate', 'plenadren');
+														const efmodyDose = convertDoseBetweenFormulations(totalDose, 'cortisone_acetate', 'efmody');
+
+														return (
+															<div className="space-y-4">
+																<div className="bg-white rounded-lg p-4 border-2 border-gray-200">
+																	<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+																		{/* Cortisone Acetato */}
+																		<div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+																			<div className="font-semibold text-blue-900 mb-2">💊 Cortisone acetato (Attuale)</div>
+																			<div className="text-2xl font-bold text-blue-700">{totalDose} mg/die</div>
+																			<div className="text-sm text-blue-600 mt-2">
+																				• Rilascio immediato (IR)<br />
+																				• 2-3 somministrazioni/giorno<br />
+																				• Costo: Basso<br />
+																				• Frazionabile in quarti
+																			</div>
+																		</div>
+
+																		{/* Idrocortisone */}
+																		<div className="bg-green-50 p-4 rounded-lg border border-green-200">
+																			<div className="font-semibold text-green-900 mb-2">💊 Idrocortisone</div>
+																			<div className="text-2xl font-bold text-green-700">{hcDose} mg/die</div>
+																			<div className="text-sm text-green-600 mt-2">
+																				• Rilascio immediato (IR)<br />
+																				• 3 somministrazioni/giorno<br />
+																				• Costo: Basso<br />
+																				• Maggiore potenza
+																			</div>
+																		</div>
+
+																		{/* Idrocortisone ER monosomministrazione */}
+																		<div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+																			<div className="font-semibold text-purple-900 mb-2">💊 Idrocortisone ER (monosomministrazione)</div>
+																			<div className="text-2xl font-bold text-purple-700">{plenadrenDose} mg/die</div>
+																			<div className="text-sm text-purple-600 mt-2">
+																				• Rilascio modificato (ER)<br />
+																				• 1 somministrazione/giorno<br />
+																				• Costo: Alto<br />
+																				• Esposizione -20% vs IR
+																			</div>
+																		</div>
+
+																		{/* Idrocortisone ER bisomministrazione */}
+																		<div className="bg-indigo-50 p-4 rounded-lg border border-indigo-200">
+																			<div className="font-semibold text-indigo-900 mb-2">💊 Idrocortisone ER (bisomministrazione)</div>
+																			<div className="text-2xl font-bold text-indigo-700">{efmodyDose} mg/die</div>
+																			<div className="text-sm text-indigo-600 mt-2">
+																				• Rilascio modificato (ER)<br />
+																				• 2 somministrazioni/giorno<br />
+																				• Costo: Alto<br />
+																				• Ritmo circadiano
+																			</div>
+																		</div>
+																	</div>
+																</div>
+															</div>
+														);
+													})()}
+												</div>
+
+												{/* RACCOMANDAZIONE FORMULAZIONE */}
+												<div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-400 rounded-xl p-6">
+													<h3 className="font-bold text-xl text-green-900 mb-4 flex items-center gap-2">
+														✨ FORMULAZIONE RACCOMANDATA
+													</h3>
+													
+													{(() => {
+														const totalDose = proposedTherapy.cortisoneAcetate.morning + 
+																		proposedTherapy.cortisoneAcetate.midday + 
+																		proposedTherapy.cortisoneAcetate.evening;
+														const numDoses = proposedTherapy.cortisoneAcetate.evening > 0 ? 3 : 2;
+
+														// Calcola QoL score se disponibile
+														let qolScore = null;
+														if (records.length > 0) {
+															const lastRecord = records[records.length - 1];
+															const qolParams = [lastRecord.fatigue, lastRecord.moodChanges, lastRecord.workCapacity, 
+																			   lastRecord.socialLife, lastRecord.sleepQuality, lastRecord.physicalAppearance, 
+																			   lastRecord.overallWellbeing, lastRecord.treatmentSatisfaction];
+															const validParams = qolParams.filter(p => p != null);
+															if (validParams.length > 0) {
+																qolScore = validParams.reduce((a, b) => a + b, 0) / validParams.length;
+															}
+														}
+
+														// Logica raccomandazione
+														let recommendation = "";
+														let reasons = [];
+
+														if (totalDose > 37.5 || (qolScore && qolScore < 2.5) || numDoses >= 3) {
+															// Raccomanda ER-HC
+															recommendation = "Idrocortisone a rilascio modificato";
+															
+															if (totalDose > 37.5) {
+																reasons.push("Dose elevata (>37.5mg): le formulazioni ER riducono l'esposizione complessiva del 20%");
+															}
+															if (qolScore && qolScore < 2.5) {
+																reasons.push(`Qualità di vita critica (${qolScore.toFixed(1)}/5): ER-HC migliora AddiQoL in media di +4 punti`);
+															}
+															if (numDoses >= 3) {
+																reasons.push("Schema a 3 somministrazioni: idrocortisone ER monosomministrazione semplifica la terapia");
+															}
+															
+															reasons.push("Benefici attesi: riduzione peso (-1-2kg), PA (-5mmHg), HbA1c (-0.3-0.6%)");
+															
+														} else if (totalDose <= 25 && numDoses === 2) {
+															// Mantieni IR
+															recommendation = "Cortisone acetato (Formulazione attuale)";
+															
+															reasons.push("Dose moderata (≤25mg): schema a 2 dosi IR è adeguato");
+															reasons.push("Costo-efficacia: formulazioni IR hanno costo molto inferiore");
+															reasons.push("Flessibilità: possibilità di frazionare le compresse secondo necessità");
+															reasons.push("Consolidato: ampia esperienza clinica con questa formulazione");
+															
+														} else {
+															// Situazione intermedia
+															recommendation = "Cortisone acetato o considerare idrocortisone ER";
+															
+															reasons.push("Dose intermedia: valutare caso per caso");
+															if (qolScore && qolScore < 3.5) {
+																reasons.push(`QoL subottimale (${qolScore.toFixed(1)}/5): potrebbe beneficiare di idrocortisone ER`);
+															}
+															reasons.push("Considerare preferenze paziente, costi e copertura assicurativa");
+														}
+
+														return (
+															<div className="space-y-4">
+																<div className="bg-white rounded-lg p-6 border-2 border-green-300">
+																	<div className="text-center mb-4">
+																		<div className="text-3xl font-bold text-green-700 mb-2">
+																			{recommendation}
+																		</div>
+																		<div className="inline-block bg-green-200 text-green-800 px-4 py-2 rounded-full font-semibold">
+																			{recommendation.includes("rilascio modificato") 
+																				? "🌟 Formulazione Avanzata" 
+																				: "✅ Formulazione Standard"}
+																		</div>
+																	</div>
+
+																	<div className="bg-green-50 rounded-lg p-4 mt-4">
+																		<div className="font-semibold text-green-900 mb-3">📌 Motivazione:</div>
+																		<ul className="space-y-2">
+																			{reasons.map((reason, idx) => (
+																				<li key={idx} className="flex gap-2 text-sm text-green-800">
+																					<span className="text-green-600">•</span>
+																					<span>{reason}</span>
+																				</li>
+																			))}
+																		</ul>
+																	</div>
+
+																	{recommendation.includes("rilascio modificato") && (
+																		<div className="mt-4 bg-yellow-50 border border-yellow-300 rounded-lg p-4">
+																			<div className="font-semibold text-yellow-900 mb-2">⚠️ Nota per idrocortisone ER:</div>
+																			<ul className="text-sm text-yellow-800 space-y-1">
+																				<li>• Richiede approvazione specialista endocrinologo</li>
+																				<li>• Costo significativamente superiore (≈10x vs IR)</li>
+																				<li>• Verificare copertura SSN/assicurativa</li>
+																				<li>• Controindicato in caso di malassorbimento intestinale</li>
+																				<li>• Necessario mantenere idrocortisone IR per situazioni di emergenza</li>
+																			</ul>
+																		</div>
+																	)}
+																</div>
+															</div>
+														);
+													})()}
+												</div>
+
+												{/* TERAPIA MINERALCORTICOIDE */}
+												<div className="bg-gradient-to-br from-cyan-50 to-teal-50 border-2 border-cyan-400 rounded-xl p-6">
+													<h3 className="font-bold text-xl text-cyan-900 mb-4 flex items-center gap-2">
+														🧂 TERAPIA MINERALCORTICOIDE
+													</h3>
+													
+													<div className="bg-white rounded-lg p-6 border-2 border-cyan-200">
+														<div className="flex items-center justify-between mb-4">
+															<div>
+																<div className="text-sm text-cyan-700 font-medium">Fludrocortisone</div>
+																<div className="text-xs text-cyan-600">Sostituzione mineralcorticoide</div>
+															</div>
+															<div className="text-right">
+																<div className="text-4xl font-bold text-cyan-700">
+																	{proposedTherapy.florinef} mg
+																</div>
+																<div className="text-sm text-cyan-600">1 volta/die (mattina)</div>
+															</div>
+														</div>
+
+														<div className="bg-cyan-50 rounded-lg p-4 border border-cyan-200">
+															<div className="font-semibold text-cyan-900 mb-2">📋 Istruzioni:</div>
+															<ul className="text-sm text-cyan-800 space-y-2">
+																<li className="flex gap-2">
+																	<span>•</span>
+																	<span>Assunzione al mattino insieme al glucocorticoide</span>
+																</li>
+																<li className="flex gap-2">
+																	<span>•</span>
+																	<span>Monitorare PA e elettroliti (Na, K) regolarmente</span>
+																</li>
+																<li className="flex gap-2">
+																	<span>•</span>
+																	<span>Range terapeutico standard: 0.05-0.2 mg/die</span>
+																</li>
+																<li className="flex gap-2">
+																	<span>•</span>
+																	<span>Aggiustare dosaggio in base a PA, elettroliti e renina</span>
+																</li>
+															</ul>
+														</div>
+
+														<div className="mt-4 bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
+															<div className="text-sm text-blue-800">
+																<p className="font-semibold mb-1">💡 Target terapeutici:</p>
+																<ul className="space-y-1 ml-4">
+																	<li>• PA: 110-130/70-85 mmHg</li>
+																	<li>• Sodio: 135-145 mEq/L</li>
+																	<li>• Potassio: 3.5-5.0 mEq/L</li>
+																	<li>• Renina: 4-42 mU/L (ottimale per Addison)</li>
+																</ul>
+															</div>
+														</div>
+													</div>
+												</div>
+
+												{/* Pulsante applica */}
+												<div className="flex justify-center pt-4">
+													<Button
+														onClick={applyProposedTherapy}
+														className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-8 py-6 text-lg font-bold rounded-xl shadow-lg transform transition hover:scale-105"
+													>
+														✅ APPLICA TERAPIA PROPOSTA
+													</Button>
+												</div>
+											</>
+										) : (
+											<div className="text-center py-12">
+												<div className="text-6xl mb-4">💊</div>
+												<p className="text-gray-600 text-lg mb-4">Nessuna terapia proposta disponibile</p>
+												<p className="text-sm text-gray-500">
+													Esegui l'algoritmo dopo aver inserito i dati clinici per ricevere una proposta terapeutica personalizzata
+												</p>
+												<Button
+													onClick={runAlgorithm}
+													className="mt-6 bg-blue-600 hover:bg-blue-700"
+												>
+													🤖 Esegui Algoritmo
+												</Button>
+											</div>
+										)}
+									</CardContent>
+								</Card>
+							</div>
+						</motion.div>
+					</TabsContent>
+
 					<TabsContent value="piano" className="mt-4">
 						<div className="space-y-6">
 							{/* TERAPIA GLUCOCORTICOIDE */}
@@ -4262,22 +4753,35 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 
 										<div className="space-y-3">
 											<div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-												<div className="font-medium text-yellow-800 mb-2">Ormoni</div>
-												<div className="space-y-2 text-sm">
-													<div>
-														<span className="font-medium">ACTH (pg/mL):</span>
-														<div className="text-lg font-bold text-orange-600">82-145</div>
+												<div className="font-medium text-yellow-800 mb-2">🔬 Ormoni - Valori di Riferimento</div>
+												<div className="space-y-3 text-sm">
+													<div className="bg-white p-3 rounded border">
+														<span className="font-medium text-gray-800">ACTH (pg/mL):</span>
+														<div className="text-lg font-bold text-blue-600 mt-1">7.2 - 63.5</div>
+														<div className="text-xs text-gray-600 mt-2">
+															<span className="font-medium text-red-600">⚠️ Interpretazione nell'Addison:</span><br />
+															• ACTH &lt;64 pg/mL → <span className="font-semibold text-red-600">Possibile sovradosaggio glucocorticoide</span><br />
+															• ACTH &gt;64 pg/mL → Controllo adeguato/sottodosaggio
+														</div>
 													</div>
-													<div>
-														<span className="font-medium">Cortisolo (μg/dL):</span>
-														<div className="text-lg font-bold text-orange-600">6-23</div>
-													</div>
-													<div>
-														<span className="font-medium">Renina (mU/L):</span>
-														<div className="text-lg font-bold text-orange-600">0.2-2.8</div>
+													<div className="bg-white p-3 rounded border">
+														<span className="font-medium text-gray-800">Cortisolo basale (μg/dL):</span>
+														<div className="text-lg font-bold text-blue-600 mt-1">6-23</div>
 														<div className="text-xs text-gray-600 mt-1">
-															• Renina aumentata: &gt;2.8 mU/L<br />
-															• Renina elevata: &gt;3.0 mU/L
+															• Valori &lt;6 μg/dL indicano inadeguato controllo
+														</div>
+													</div>
+													<div className="bg-white p-3 rounded border">
+														<span className="font-medium text-gray-800">Renina ortostatismo (mU/L):</span>
+														<div className="text-lg font-bold text-blue-600 mt-1">4.4 - 4.6 <span className="text-sm text-gray-500">(popolazione generale)</span></div>
+														<div className="text-xs text-gray-600 mt-2">
+															<span className="font-medium text-green-600">✅ Range normale ADDISON:</span><br />
+															• <span className="font-semibold text-green-700">4-42 mU/L</span> (compenso ottimale)<br />
+															<br />
+															<span className="font-medium text-orange-600">📊 Interpretazione:</span><br />
+															• Renina &lt;4 mU/L → <span className="font-semibold text-red-600">Sovradosaggio florinef</span><br />
+															• Renina 4-42 mU/L → <span className="font-semibold text-green-600">✅ OTTIMALE per Addison</span><br />
+															• Renina &gt;42 mU/L → <span className="font-semibold text-orange-600">Sottodosaggio florinef</span>
 														</div>
 													</div>
 												</div>

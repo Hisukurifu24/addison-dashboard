@@ -767,6 +767,7 @@ export default function AddisonDashboard() {
 	const DRUG_DATABASE: Record<string, Omit<DrugInteraction, 'detectedVariants'> & { variants: string[] }> = {
 		// INDUTTORI CYP3A4 - Aumentano metabolismo GC
 		rifampicina: {
+			drugName: 'Rifampicina',
 			variants: ['rifampicina', 'rifampin', 'rifadin'],
 			category: 'cyp3a4_inducer',
 			severity: 'critical',
@@ -780,6 +781,7 @@ export default function AddisonDashboard() {
 			monitoring: ['ACTH ogni 2-3 settimane', 'Elettroliti settimanali', 'Pressione arteriosa']
 		},
 		fenitoina: {
+			drugName: 'Fenitoina',
 			variants: ['fenitoina', 'phenytoin', 'dintoina', 'aurantin'],
 			category: 'cyp3a4_inducer',
 			severity: 'major',
@@ -792,6 +794,7 @@ export default function AddisonDashboard() {
 			monitoring: ['ACTH mensile', 'Sintomi ipocortisolismo']
 		},
 		carbamazepina: {
+			drugName: 'Carbamazepina',
 			variants: ['carbamazepina', 'carbamazepine', 'tegretol'],
 			category: 'cyp3a4_inducer',
 			severity: 'major',
@@ -804,6 +807,7 @@ export default function AddisonDashboard() {
 			monitoring: ['ACTH mensile', 'Funzionalità epatica']
 		},
 		fenobarbital: {
+			drugName: 'Fenobarbital',
 			variants: ['fenobarbital', 'phenobarbital', 'gardenal', 'luminal'],
 			category: 'cyp3a4_inducer',
 			severity: 'major',
@@ -818,6 +822,7 @@ export default function AddisonDashboard() {
 
 		// INIBITORI CYP3A4 - Riducono metabolismo GC
 		ritonavir: {
+			drugName: 'Ritonavir',
 			variants: ['ritonavir', 'norvir'],
 			category: 'cyp3a4_inhibitor',
 			severity: 'critical',
@@ -831,6 +836,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Cortisolo libero urinario 24h mensile', 'Peso corporeo', 'Glicemia', 'PA settimanale']
 		},
 		itraconazolo: {
+			drugName: 'Itraconazolo',
 			variants: ['itraconazolo', 'itraconazole', 'sporanox'],
 			category: 'cyp3a4_inhibitor',
 			severity: 'major',
@@ -843,6 +849,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Peso', 'PA', 'Glicemia']
 		},
 		ketoconazolo: {
+			drugName: 'Ketoconazolo',
 			variants: ['ketoconazolo', 'ketoconazole', 'nizoral'],
 			category: 'cyp3a4_inhibitor',
 			severity: 'major',
@@ -855,6 +862,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Funzione surrenalica', 'Elettroliti']
 		},
 		claritromicina: {
+			drugName: 'Claritromicina',
 			variants: ['claritromicina', 'clarithromycin', 'klacid', 'macladin'],
 			category: 'cyp3a4_inhibitor',
 			severity: 'moderate',
@@ -867,6 +875,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Sintomi Cushing durante terapia']
 		},
 		eritromicina: {
+			drugName: 'Eritromicina',
 			variants: ['eritromicina', 'erythromycin', 'eritrocina'],
 			category: 'cyp3a4_inhibitor',
 			severity: 'moderate',
@@ -880,6 +889,7 @@ export default function AddisonDashboard() {
 
 		// ESTROGENI - Aumentano CBG
 		estradiolo: {
+			drugName: 'Estradiolo',
 			variants: ['estradiolo', 'estradiol', 'progynova', 'climara'],
 			category: 'estrogen',
 			severity: 'major',
@@ -893,6 +903,7 @@ export default function AddisonDashboard() {
 			monitoring: ['ACTH', 'Cortisolo libero', 'Sintomi ipocortisolismo']
 		},
 		etinilestradiolo: {
+			drugName: 'Etinilestradiolo',
 			variants: ['etinilestradiolo', 'ethinylestradiol', 'pillola', 'contraccettivo orale'],
 			category: 'estrogen',
 			severity: 'major',
@@ -907,6 +918,7 @@ export default function AddisonDashboard() {
 
 		// DIURETICI
 		furosemide: {
+			drugName: 'Furosemide',
 			variants: ['furosemide', 'lasix'],
 			category: 'diuretic',
 			severity: 'moderate',
@@ -920,6 +932,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Na, K settimanali', 'Funzione renale']
 		},
 		idroclorotiazide: {
+			drugName: 'Idroclorotiazide',
 			variants: ['idroclorotiazide', 'hydrochlorothiazide', 'esidrex'],
 			category: 'diuretic',
 			severity: 'moderate',
@@ -932,6 +945,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Elettroliti settimanali']
 		},
 		spironolattone: {
+			drugName: 'Spironolattone',
 			variants: ['spironolattone', 'spironolactone', 'aldactone'],
 			category: 'diuretic',
 			severity: 'major',
@@ -947,6 +961,7 @@ export default function AddisonDashboard() {
 
 		// ACE-INIBITORI E SARTANI
 		enalapril: {
+			drugName: 'Enalapril',
 			variants: ['enalapril', 'enapren'],
 			category: 'ace_inhibitor',
 			severity: 'moderate',
@@ -959,6 +974,7 @@ export default function AddisonDashboard() {
 			monitoring: ['K, Na settimanali inizialmente']
 		},
 		ramipril: {
+			drugName: 'Ramipril',
 			variants: ['ramipril', 'triatec'],
 			category: 'ace_inhibitor',
 			severity: 'moderate',
@@ -971,6 +987,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Elettroliti settimanali']
 		},
 		losartan: {
+			drugName: 'Losartan',
 			variants: ['losartan', 'lortaan'],
 			category: 'arb',
 			severity: 'moderate',
@@ -985,6 +1002,7 @@ export default function AddisonDashboard() {
 
 		// ANTICOAGULANTI
 		warfarin: {
+			drugName: 'Warfarin',
 			variants: ['warfarin', 'coumadin'],
 			category: 'anticoagulant',
 			severity: 'moderate',
@@ -999,6 +1017,7 @@ export default function AddisonDashboard() {
 
 		// FANS
 		ibuprofene: {
+			drugName: 'Ibuprofene',
 			variants: ['ibuprofene', 'ibuprofen', 'brufen', 'moment'],
 			category: 'nsaid',
 			severity: 'moderate',
@@ -1014,6 +1033,7 @@ export default function AddisonDashboard() {
 
 		// ORMONI TIROIDEI
 		levotiroxina: {
+			drugName: 'Levotiroxina',
 			variants: ['levotiroxina', 'levothyroxine', 'eutirox', 'tirosint'],
 			category: 'thyroid',
 			severity: 'moderate',
@@ -1029,6 +1049,7 @@ export default function AddisonDashboard() {
 
 		// ANTACIDI
 		omeprazolo: {
+			drugName: 'Omeprazolo',
 			variants: ['omeprazolo', 'omeprazole', 'mopral', 'antra'],
 			category: 'antacid',
 			severity: 'minor',
@@ -1041,6 +1062,7 @@ export default function AddisonDashboard() {
 			monitoring: ['Efficacia terapia GC']
 		},
 		lansoprazolo: {
+			drugName: 'Lansoprazolo',
 			variants: ['lansoprazolo', 'lansoprazole', 'limpidex'],
 			category: 'antacid',
 			severity: 'minor',
@@ -1939,7 +1961,7 @@ export default function AddisonDashboard() {
 		const vertigo = r.vertigo;
 
 		// ===== ANALISI INTERFERENZE FARMACOLOGICHE ===== //
-		const drugAnalysis = analyzeDrugInteractions(r.otherMedications);
+		const drugAnalysis = analyzeDrugInteractions(r.otherMedications || null);
 
 		// Aggiungi alerts da interferenze farmacologiche
 		if (drugAnalysis.alerts.length > 0) {
@@ -1975,7 +1997,7 @@ export default function AddisonDashboard() {
 			hypokaliemia,
 			qolScore: avgQoLScoreForERHC,
 			adherenceIssues: false, // Potrebbe essere un campo da aggiungere
-			morningFatigue: r.fatigue !== null && r.fatigue >= 4,
+			morningFatigue: r.fatigue !== null && r.fatigue !== undefined && r.fatigue >= 4,
 			multipleAdministrations: currentTherapy.cortisoneAcetate.evening > 0 ? 3 : 2,
 			age: currentPatient?.demographics.age || 50,
 			bmi: undefined, // Potrebbe essere calcolato da peso/altezza se disponibili
@@ -2129,13 +2151,13 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 		const optimalSchedule = selectOptimalDosingSchedule(
 			recommendedDose,
 			{
-				morningFatigue: r.fatigue !== null && r.fatigue >= 4,
-				afternoonFatigue: r.workCapacity !== null && r.workCapacity <= 2,
-				eveningFatigue: r.socialLife !== null && r.socialLife <= 2,
-				sleepDisturbance: r.sleepQuality !== null && r.sleepQuality <= 2,
+				morningFatigue: r.fatigue !== null && r.fatigue !== undefined && r.fatigue >= 4,
+				afternoonFatigue: r.workCapacity !== null && r.workCapacity !== undefined && r.workCapacity <= 2,
+				eveningFatigue: r.socialLife !== null && r.socialLife !== undefined && r.socialLife <= 2,
+				sleepDisturbance: r.sleepQuality !== null && r.sleepQuality !== undefined && r.sleepQuality <= 2,
 				nightSymptoms: false
 			},
-			avgQoLScoreForERHC
+			avgQoLScoreForERHC ?? undefined
 		);
 
 		// Usa lo schema ottimizzato
@@ -3915,7 +3937,7 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 														{currentPatient.firstName} {currentPatient.lastName}
 													</h3>
 													<p className="text-sm text-blue-700">
-														{currentPatient.demographics.age} anni • {currentPatient.demographics.sex === 'M' ? 'Maschio' : 'Femmina'} • 
+														{currentPatient.demographics.age} anni • {currentPatient.demographics.sex === 'M' ? 'Maschio' : 'Femmina'} •
 														{currentPatient.demographics.weight}kg • {currentPatient.demographics.height}cm
 													</p>
 												</div>
@@ -3946,9 +3968,9 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 													<div className="text-center">
 														<div className="text-sm font-medium text-blue-700 mb-2">DOSE TOTALE GIORNALIERA</div>
 														<div className="text-5xl font-bold text-blue-900 mb-2">
-															{(proposedTherapy.cortisoneAcetate.morning + 
-															  proposedTherapy.cortisoneAcetate.midday + 
-															  proposedTherapy.cortisoneAcetate.evening).toFixed(2)} mg
+															{(proposedTherapy.cortisoneAcetate.morning +
+																proposedTherapy.cortisoneAcetate.midday +
+																proposedTherapy.cortisoneAcetate.evening).toFixed(2)} mg
 														</div>
 														<div className="text-sm text-blue-600">Cortisone Acetato</div>
 													</div>
@@ -4074,12 +4096,12 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 													<h3 className="font-bold text-xl text-purple-900 mb-4 flex items-center gap-2">
 														🔄 EQUIVALENZE FORMULAZIONI GLUCOCORTICOIDI
 													</h3>
-													
+
 													{(() => {
-														const totalDose = proposedTherapy.cortisoneAcetate.morning + 
-																		proposedTherapy.cortisoneAcetate.midday + 
-																		proposedTherapy.cortisoneAcetate.evening;
-														
+														const totalDose = proposedTherapy.cortisoneAcetate.morning +
+															proposedTherapy.cortisoneAcetate.midday +
+															proposedTherapy.cortisoneAcetate.evening;
+
 														const hcDose = convertDoseBetweenFormulations(totalDose, 'cortisone_acetate', 'hydrocortisone');
 														const plenadrenDose = convertDoseBetweenFormulations(totalDose, 'cortisone_acetate', 'plenadren');
 														const efmodyDose = convertDoseBetweenFormulations(totalDose, 'cortisone_acetate', 'efmody');
@@ -4147,20 +4169,20 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 													<h3 className="font-bold text-xl text-green-900 mb-4 flex items-center gap-2">
 														✨ FORMULAZIONE RACCOMANDATA
 													</h3>
-													
+
 													{(() => {
-														const totalDose = proposedTherapy.cortisoneAcetate.morning + 
-																		proposedTherapy.cortisoneAcetate.midday + 
-																		proposedTherapy.cortisoneAcetate.evening;
+														const totalDose = proposedTherapy.cortisoneAcetate.morning +
+															proposedTherapy.cortisoneAcetate.midday +
+															proposedTherapy.cortisoneAcetate.evening;
 														const numDoses = proposedTherapy.cortisoneAcetate.evening > 0 ? 3 : 2;
 
 														// Calcola QoL score se disponibile
 														let qolScore = null;
 														if (records.length > 0) {
 															const lastRecord = records[records.length - 1];
-															const qolParams = [lastRecord.fatigue, lastRecord.moodChanges, lastRecord.workCapacity, 
-																			   lastRecord.socialLife, lastRecord.sleepQuality, lastRecord.physicalAppearance, 
-																			   lastRecord.overallWellbeing, lastRecord.treatmentSatisfaction];
+															const qolParams = [lastRecord.fatigue, lastRecord.moodChanges, lastRecord.workCapacity,
+															lastRecord.socialLife, lastRecord.sleepQuality, lastRecord.physicalAppearance,
+															lastRecord.overallWellbeing, lastRecord.treatmentSatisfaction];
 															const validParams = qolParams.filter(p => p != null);
 															if (validParams.length > 0) {
 																qolScore = validParams.reduce((a, b) => a + b, 0) / validParams.length;
@@ -4174,7 +4196,7 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 														if (totalDose > 37.5 || (qolScore && qolScore < 2.5) || numDoses >= 3) {
 															// Raccomanda ER-HC
 															recommendation = "Idrocortisone a rilascio modificato";
-															
+
 															if (totalDose > 37.5) {
 																reasons.push("Dose elevata (>37.5mg): le formulazioni ER riducono l'esposizione complessiva del 20%");
 															}
@@ -4184,22 +4206,22 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 															if (numDoses >= 3) {
 																reasons.push("Schema a 3 somministrazioni: idrocortisone ER monosomministrazione semplifica la terapia");
 															}
-															
+
 															reasons.push("Benefici attesi: riduzione peso (-1-2kg), PA (-5mmHg), HbA1c (-0.3-0.6%)");
-															
+
 														} else if (totalDose <= 25 && numDoses === 2) {
 															// Mantieni IR
 															recommendation = "Cortisone acetato (Formulazione attuale)";
-															
+
 															reasons.push("Dose moderata (≤25mg): schema a 2 dosi IR è adeguato");
 															reasons.push("Costo-efficacia: formulazioni IR hanno costo molto inferiore");
 															reasons.push("Flessibilità: possibilità di frazionare le compresse secondo necessità");
 															reasons.push("Consolidato: ampia esperienza clinica con questa formulazione");
-															
+
 														} else {
 															// Situazione intermedia
 															recommendation = "Cortisone acetato o considerare idrocortisone ER";
-															
+
 															reasons.push("Dose intermedia: valutare caso per caso");
 															if (qolScore && qolScore < 3.5) {
 																reasons.push(`QoL subottimale (${qolScore.toFixed(1)}/5): potrebbe beneficiare di idrocortisone ER`);
@@ -4215,8 +4237,8 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 																			{recommendation}
 																		</div>
 																		<div className="inline-block bg-green-200 text-green-800 px-4 py-2 rounded-full font-semibold">
-																			{recommendation.includes("rilascio modificato") 
-																				? "🌟 Formulazione Avanzata" 
+																			{recommendation.includes("rilascio modificato")
+																				? "🌟 Formulazione Avanzata"
 																				: "✅ Formulazione Standard"}
 																		</div>
 																	</div>
@@ -4256,7 +4278,7 @@ ${FORMULATIONS.plenadren.contraindications.map(c => `   • ${c}`).join('\n')}
 													<h3 className="font-bold text-xl text-cyan-900 mb-4 flex items-center gap-2">
 														🧂 TERAPIA MINERALCORTICOIDE
 													</h3>
-													
+
 													<div className="bg-white rounded-lg p-6 border-2 border-cyan-200">
 														<div className="flex items-center justify-between mb-4">
 															<div>
